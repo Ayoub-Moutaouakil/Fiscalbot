@@ -205,7 +205,6 @@ prometheus-api-client==0.5.5
 promise==2.3
 proto-plus==1.23.0
 protobuf==4.25.6
-psutil @ file:///Users/joker/Downloads/psutil-5.9.8
 psycopg2==2.9.9
 psycopg2-binary==2.9.9
 pyarrow==15.0.0
