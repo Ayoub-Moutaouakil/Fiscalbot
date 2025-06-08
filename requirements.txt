@@ -2,6 +2,6 @@ streamlit
 qdrant-client
 google-generativeai
 voyageai
-psycopg2
+psycopg2-binary
 pandas
 plotly
