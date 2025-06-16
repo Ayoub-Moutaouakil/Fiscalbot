@@ -1772,6 +1772,490 @@ Réponds "NON_PERTINENT" si aucune info utile."""
         return stats
 
 
+class TerritorialFiscalBot:
+    """Chatbot spécialisé dans la fiscalité des collectivités territoriales"""
+    
+    def __init__(self):
+        self.qdrant_client = qdrant_client_main
+        self.synonym_manager = synonym_manager
+        self.db = db
+        
+        # Collection FCT pour les collectivités territoriales
+        self.collection_name = "FCT"
+        
+        # Configuration optimisée
+        self.config = {
+            "search_threshold": 0.08,
+            "search_limit": 12
+        }
+        
+        # Logs de debug
+        self.debug_logs = []
+        
+        # Système d'intelligence conversationnelle
+        self.conversation_patterns = {
+            "greetings": [
+                "bonjour", "bonsoir", "salut", "hello", "hey", "coucou", "bonne journée"
+            ],
+            "presentation_request": [
+                "présente toi", "qui es tu", "que fais tu", "présentation", "qui êtes vous"
+            ],
+            "help_request": [
+                "aide", "help", "comment ça marche", "utilisation", "guide", "comment faire"
+            ],
+            "goodbye": [
+                "au revoir", "bye", "à bientôt", "merci", "bonne journée", "salut"
+            ]
+        }
+        
+        # Contexte de conversation
+        self.conversation_context = {
+            "last_question": "",
+            "last_response": "",
+            "last_articles": [],
+            "waiting_for_clarification": False,
+            "context_articles": [],
+            "context_topic": "",
+            "user_name": None,
+            "conversation_started": False,
+            "search_history": []
+        }
+    
+    def _clear_context(self):
+        """Efface le contexte de conversation"""
+        self.conversation_context = {
+            "last_question": "",
+            "last_response": "",
+            "last_articles": [],
+            "waiting_for_clarification": False,
+            "context_articles": [],
+            "context_topic": "",
+            "user_name": self.conversation_context.get("user_name"),  # Garder le nom
+            "conversation_started": False,
+            "search_history": []
+        }
+    
+    def log_debug(self, message: str):
+        """Ajoute un message aux logs de debug avec timestamp"""
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        self.debug_logs.append(f"[{timestamp}] {message}")
+    
+    def clear_debug_logs(self):
+        """Efface les logs de debug"""
+        self.debug_logs = []
+    
+    def get_debug_logs(self) -> List[str]:
+        """Retourne les logs de debug"""
+        return self.debug_logs
+    
+    def detect_conversation_intent(self, query: str) -> str:
+        """Détecte l'intention conversationnelle de l'utilisateur"""
+        query_lower = query.lower().strip()
+        
+        # Extraction du nom si présent
+        name_patterns = [
+            r"je suis ([a-zA-ZÀ-ÿ\s]+)",
+            r"je m'appelle ([a-zA-ZÀ-ÿ\s]+)",
+            r"mon nom est ([a-zA-ZÀ-ÿ\s]+)"
+        ]
+        
+        for pattern in name_patterns:
+            match = re.search(pattern, query_lower)
+            if match:
+                self.conversation_context["user_name"] = match.group(1).strip().title()
+        
+        # Vérifier d'abord si c'est une question fiscale territoriale
+        territorial_keywords = [
+            "commune", "communal", "préfecture", "province", "région", "régional",
+            "collectivité", "territorial", "taxe communale", "taxe régionale",
+            "redevance", "contribution", "budget", "finances locales", "fiscalité locale",
+            "impôt local", "taxe locale", "bénéficiaire", "affectation", "répartition"
+        ]
+        
+        if any(keyword in query_lower for keyword in territorial_keywords):
+            return "fiscal_question"
+        
+        # Ensuite vérifier les intentions conversationnelles
+        for intent, patterns in self.conversation_patterns.items():
+            if any(pattern in query_lower for pattern in patterns):
+                return intent
+        
+        return "general_question"
+    
+    def generate_conversational_response(self, query: str, intent: str) -> str:
+        """Génère des réponses conversationnelles intelligentes"""
+        
+        user_name = self.conversation_context.get("user_name", "")
+        name_part = f" {user_name}" if user_name else ""
+        
+        if intent == "greetings":
+            if not self.conversation_context["conversation_started"]:
+                self.conversation_context["conversation_started"] = True
+                return f"""Bonjour{name_part} ! 👋
+
+Je suis votre **Expert en Fiscalité des Collectivités Territoriales**, spécialisé dans les taxes et contributions des communes, préfectures, provinces et régions du Maroc.
+
+🏛️ **Ma spécialité :**
+• Taxes communales et leurs bénéficiaires
+• Impôts des préfectures et provinces
+• Contributions régionales
+• Répartition et affectation des recettes fiscales
+• Fiscalité locale et territoriale
+
+💡 **Exemples de questions :**
+• "Quelles taxes bénéficient aux communes ?"
+• "Comment sont réparties les recettes de la TVA ?"
+• "Quels impôts alimentent le budget régional ?"
+• "Qui bénéficie de la taxe sur les véhicules ?"
+
+Comment puis-je vous aider avec la fiscalité territoriale ?"""
+            else:
+                return f"Rebonjour{name_part} ! Comment puis-je vous aider avec vos questions sur la fiscalité des collectivités territoriales ?"
+        
+        elif intent == "presentation_request":
+            return f"""Je suis votre **Expert en Fiscalité des Collectivités Territoriales** ! 🏛️
+
+📚 **Ma spécialité :**
+Assistant IA spécialisé dans la fiscalité locale marocaine, avec une expertise approfondie sur :
+
+🏘️ **Niveau communal :**
+• Taxes et redevances communales
+• Budget et ressources des communes
+• Fiscalité locale urbaine et rurale
+
+🏢 **Niveau préfectoral/provincial :**
+• Impôts des préfectures et provinces
+• Répartition des recettes fiscales
+• Contributions territoriales
+
+🌍 **Niveau régional :**
+• Fiscalité régionale
+• Affectation des ressources aux régions
+• Développement territorial
+
+Que souhaitez-vous savoir sur la fiscalité des collectivités territoriales ?"""
+        
+        elif intent == "help_request":
+            return """🆘 **Guide d'utilisation - Expert Fiscalité Territoriale**
+
+**Types de questions que je traite :**
+• Répartition des taxes entre collectivités
+• Bénéficiaires des différents impôts
+• Budget et ressources des communes/régions
+• Fiscalité locale et territoriale
+
+**Exemples de formulations efficaces :**
+• "Qui bénéficie de [nom de la taxe] ?"
+• "Comment est répartie [nom de l'impôt] ?"
+• "Quelles sont les ressources fiscales des [communes/régions] ?"
+• "Quel pourcentage de [taxe] va aux [collectivités] ?"
+
+**Conseils pour de meilleures réponses :**
+✅ Soyez spécifique sur la collectivité (commune, région, etc.)
+✅ Mentionnez le type de taxe ou d'impôt
+✅ Précisez si vous cherchez des pourcentages ou montants
+
+Posez votre question sur la fiscalité territoriale !"""
+        
+        elif intent == "goodbye":
+            return f"Au revoir{name_part} ! 👋 N'hésitez pas à revenir pour toute question sur la fiscalité des collectivités territoriales. Bonne journée !"
+        
+        return "Je suis là pour répondre à vos questions sur la fiscalité des collectivités territoriales. Comment puis-je vous aider ?"
+    
+    def search_fct_documents(self, query: str, limit: int = 12):
+        """Recherche dans la collection FCT"""
+        try:
+            # Enrichir la requête avec des synonymes
+            enriched_query = self.synonym_manager.expand_query(query)
+            self.log_debug(f"🔍 Requête enrichie: {enriched_query}")
+            
+            # Générer l'embedding avec Voyage
+            embedding_response = voyage_client.embed(
+                texts=[enriched_query],
+                model="voyage-law-2"
+            )
+            query_vector = embedding_response.embeddings[0]
+            
+            # Recherche dans Qdrant
+            search_results = self.qdrant_client.search(
+                collection_name=self.collection_name,
+                query_vector=query_vector,
+                limit=limit,
+                score_threshold=self.config["search_threshold"]
+            )
+            
+            self.log_debug(f"✅ Trouvé {len(search_results)} documents FCT")
+            return search_results
+            
+        except Exception as e:
+            self.log_debug(f"❌ Erreur recherche FCT: {str(e)}")
+            return []
+    
+    def generate_fct_response(self, query: str, fct_results, use_context=False):
+        """Génère une réponse basée sur les documents FCT"""
+        
+        if not fct_results:
+            return f"""❌ **Aucune information trouvée pour : "{query}"**
+
+🔍 **Optimisez votre recherche avec :**
+• **Termes territoriaux** : commune, préfecture, province, région
+• **Types de taxes** : TVA, IS, IR, taxe professionnelle
+• **Concepts clés** : bénéficiaire, répartition, affectation, budget
+• **Questions précises** : "Qui bénéficie de la TVA ?", "Répartition IR communes"
+
+💡 **Exemples de questions efficaces :**
+• "Quelles taxes alimentent le budget communal ?"
+• "Comment est répartie la TVA entre collectivités ?"
+• "Qui bénéficie de l'impôt sur les sociétés ?"
+• "Quel pourcentage de l'IR va aux régions ?"
+
+Je suis spécialisé dans la fiscalité des collectivités territoriales marocaines !"""
+        
+        # Construire le contexte FCT
+        fct_context = ""
+        articles_found = set()
+        
+        for i, result in enumerate(fct_results):
+            metadata = result.payload
+            article_num = metadata.get("article", "N/A")
+            article_name = metadata.get("nom_article", "Sans titre")
+            content = metadata.get("contenu", "")
+            partie = metadata.get("partie", "")
+            titre = metadata.get("titre", "")
+            chapitre = metadata.get("chapitre", "")
+            section = metadata.get("section", "")
+            
+            fct_context += f"\n--- ARTICLE {article_num} ---\n"
+            if partie:
+                fct_context += f"Partie: {partie}\n"
+            if titre:
+                fct_context += f"Titre: {titre}\n"
+            if chapitre:
+                fct_context += f"Chapitre: {chapitre}\n"
+            if section:
+                fct_context += f"Section: {section}\n"
+            fct_context += f"Article: {article_name}\n"
+            fct_context += f"Contenu: {content}\n"
+            
+            articles_found.add(article_num)
+        
+        # Sauvegarder les articles trouvés
+        self.conversation_context["last_articles"] = list(articles_found)
+        
+        # Prompt spécialisé pour les collectivités territoriales
+        if use_context and self.conversation_context["waiting_for_clarification"]:
+            main_prompt = f"""Tu es un expert en fiscalité des collectivités territoriales marocaines.
+
+CONTEXTE DE CONVERSATION:
+- Question précédente: {self.conversation_context['last_question']}
+- Articles consultés: {', '.join(self.conversation_context['context_articles'])}
+- Clarification demandée sur: {self.conversation_context.get('context_topic', 'aspect non précisé')}
+
+L'utilisateur apporte des précisions.
+
+RÈGLES D'EXCELLENCE:
+1. Utilise le contexte pour affiner ta réponse
+2. Cite TOUJOURS les articles avec leurs dispositions exactes
+3. Structure ta réponse de manière claire et progressive
+4. Anticipe les questions de suivi possibles
+
+Question/clarification: "{query}"
+
+Extraits des textes sur les collectivités territoriales:
+{fct_context}"""
+        else:
+            main_prompt = f"""Tu es un expert en fiscalité des collectivités territoriales marocaines, spécialisé dans la répartition des taxes et impôts entre communes, préfectures, provinces et régions.
+
+RÈGLES PRINCIPALES:
+1. Réponds UNIQUEMENT en te basant sur les extraits fournis dans le contexte.
+2. Ne fais JAMAIS de suppositions sur des informations non présentes dans le contexte.
+3. Cite TOUJOURS les numéros d'articles précis sur lesquels tu t'appuies.
+4. Pour ta PREMIÈRE réponse seulement, commence par "Votre question porte sur [sujet fiscal territorial précis]."
+5. Respecte STRICTEMENT les pourcentages et répartitions mentionnés dans les articles.
+6. Si un article donne une définition ou une répartition explicite, elle doit figurer dans ta réponse.
+7. Mets l'accent sur les bénéficiaires (communes, préfectures, provinces, régions) et les pourcentages d'affectation.
+8. Si une énumération dépasse 10 éléments, regroupe-les par type de collectivité.
+
+STRUCTURE DE RÉPONSE:
+- Première ligne: identification du sujet fiscal territorial (uniquement première réponse)
+- Corps: explication claire avec citation explicite des articles et pourcentages
+- Si nécessaire: demande précise d'informations complémentaires
+
+N'UTILISE JAMAIS de formules comme "je ne sais pas" ou "je n'ai pas assez d'informations".
+Si le contexte est insuffisant, demande des précisions ciblées.
+
+L'utilisateur pose la question suivante : "{query}"
+
+Extraits des textes sur les collectivités territoriales:
+{fct_context}"""
+        
+        try:
+            model = genai.GenerativeModel("gemini-2.0-flash")
+            response = model.generate_content(
+                main_prompt,
+                generation_config={
+                    "temperature": 0.1,
+                    "top_p": 0.95,
+                    "max_output_tokens": 2500,
+                }
+            )
+            
+            return response.text
+            
+        except Exception as e:
+            return f"❌ Erreur lors de la génération de la réponse: {str(e)}"
+    
+    def _is_clarification_request(self, response: str) -> bool:
+        """Détecte si la réponse demande une clarification"""
+        clarification_indicators = [
+            "pourriez-vous préciser",
+            "pouvez-vous préciser", 
+            "quelle collectivité",
+            "dans quel contexte",
+            "souhaitez-vous connaître",
+            "de quel type",
+            "pour quelle collectivité"
+        ]
+        
+        response_lower = response.lower()
+        return any(indicator in response_lower for indicator in clarification_indicators)
+    
+    def _extract_topic_from_response(self, response: str) -> str:
+        """Extrait le sujet principal de la réponse pour le contexte"""
+        topics = []
+        
+        territorial_concepts = {
+            "répartition TVA": ["tva", "taxe sur la valeur ajoutée", "répartition"],
+            "budget communal": ["commune", "communal", "budget"],
+            "fiscalité régionale": ["région", "régional", "fiscalité"],
+            "taxes préfectorales": ["préfecture", "province", "taxes"],
+            "collectivités territoriales": ["collectivité", "territorial", "local"]
+        }
+        
+        response_lower = response.lower()
+        for concept, keywords in territorial_concepts.items():
+            if any(kw in response_lower for kw in keywords):
+                topics.append(concept)
+        
+        return topics[0] if topics else "fiscalité territoriale"
+    
+    def _update_context(self, question: str, response: str, articles: List[str]):
+        """Met à jour le contexte de conversation"""
+        self.conversation_context.update({
+            "last_question": question,
+            "last_response": response[:500],
+            "waiting_for_clarification": self._is_clarification_request(response),
+            "context_articles": articles,
+            "context_topic": self._extract_topic_from_response(response)
+        })
+        
+        # Ajouter à l'historique de recherche
+        search_entry = {
+            "query": question,
+            "articles": articles,
+            "timestamp": datetime.now()
+        }
+        self.conversation_context["search_history"].append(search_entry)
+        
+        # Garder seulement les 10 dernières recherches
+        if len(self.conversation_context["search_history"]) > 10:
+            self.conversation_context["search_history"] = self.conversation_context["search_history"][-10:]
+    
+    def process_query_excellence(self, query, messages_history=None):
+        """Traite une requête avec excellence maximale pour les collectivités territoriales"""
+        start_time = datetime.now()
+        self.clear_debug_logs()
+        
+        self.log_debug(f"🚀 TRAITEMENT FCT: '{query}'")
+        
+        # Détection d'intention
+        intent = self.detect_conversation_intent(query)
+        self.log_debug(f"🧠 Intention: {intent}")
+        
+        # Traitement conversationnel
+        if intent in ["greetings", "presentation_request", "help_request", "goodbye"]:
+            conversational_response = self.generate_conversational_response(query, intent)
+            execution_time = (datetime.now() - start_time).total_seconds()
+            
+            return {
+                "response": conversational_response,
+                "fct_articles": 0,
+                "articles_found": [],
+                "execution_time": execution_time,
+                "debug_logs": self.get_debug_logs(),
+                "context_used": False,
+                "intent": intent,
+                "search_method": "conversational"
+            }
+        
+        # Traitement des questions fiscales territoriales
+        original_query = query
+        use_context = False
+        
+        # Vérification du contexte
+        if (self.conversation_context["waiting_for_clarification"] and 
+            intent == "clarification"):
+            use_context = True
+            self.log_debug("🔗 Utilisation du contexte de conversation")
+        
+        # RECHERCHE FCT
+        fct_results = self.search_fct_documents(query, limit=12)
+        
+        # Génération de la réponse FCT
+        fct_response = self.generate_fct_response(query, fct_results, use_context=use_context)
+        
+        # Extraction des articles
+        articles_found = []
+        for result in fct_results:
+            article_num = result.payload.get("article", "N/A")
+            if article_num != "N/A":
+                articles_found.append(article_num)
+        
+        # Mise à jour du contexte
+        self._update_context(original_query, fct_response, articles_found)
+        
+        execution_time = (datetime.now() - start_time).total_seconds()
+        
+        # Préparer les articles pour la base de données
+        articles_info = []
+        for result in fct_results:
+            article_info = {
+                "article": result.payload.get("article", "N/A"),
+                "nom_article": result.payload.get("nom_article", "Sans titre"),
+                "partie": result.payload.get("partie", ""),
+                "titre": result.payload.get("titre", ""),
+                "chapitre": result.payload.get("chapitre", ""),
+                "section": result.payload.get("section", "")
+            }
+            articles_info.append(article_info)
+        
+        # Enregistrer dans la base de données
+        conversation_id = None
+        if self.db:
+            conversation_id = self.db.save_conversation(
+                question=query,
+                response=fct_response,
+                articles=articles_info,
+                search_method="fct_territorial",
+                semantic_score=fct_results[0].score if fct_results else 0.0,
+                query_complexity=len(query.split()),
+                execution_time=execution_time,
+                model_used="voyage-law-2"
+            )
+        
+        return {
+            "response": fct_response,
+            "fct_articles": len(fct_results),
+            "articles_found": articles_found,
+            "execution_time": execution_time,
+            "debug_logs": self.get_debug_logs(),
+            "context_used": use_context,
+            "intent": intent,
+            "search_method": "fct_territorial",
+            "conversation_id": conversation_id
+        }
+
+
 # ===== FONCTIONS DU TABLEAU DE BORD SIMPLIFIÉES =====
 def create_feedback_distribution_chart(db):
     """Crée un graphique montrant la répartition des types de feedback avec pourcentages"""
@@ -1848,8 +2332,11 @@ def main():
     @st.cache_resource
     def get_fiscal_bot():
         return FiscalBotExcellence()
+    def get_territorial_bot():
+        return TerritorialFiscalBot()
     
     bot = get_fiscal_bot()
+    territorial_bot = get_territorial_bot()
     
     # Initialiser l'historique
     if "messages" not in st.session_state:
@@ -1893,38 +2380,55 @@ Comment puis-je vous apporter une assistance d'excellence ?"""
         return False
     
     # Mode d'affichage
-    app_mode = st.sidebar.radio("Mode d'affichage", ["💬 Assistant Fiscal", "📊 Tableau de Bord"])
+    app_mode = st.sidebar.radio("Mode d'affichage", ["💬 Assistant Fiscal", "📊 Tableau de Bord", "🏛️ Expert Fiscalité des collectivités territoriales"])
     
     # Sidebar optimisée
     with st.sidebar:
         st.subheader("🔗 Tableau de Bord Excellence")
         
+        # Choisir le bot selon le mode
+        current_bot = bot if app_mode == "💬 Assistant Fiscal" else territorial_bot if app_mode == "🏛️ Expert Fiscalité des collectivités territoriales" else bot
+        
         # Informations utilisateur
-        if bot.conversation_context.get("user_name"):
-            st.success(f"👤 Utilisateur: {bot.conversation_context['user_name']}")
+        if current_bot.conversation_context.get("user_name"):
+            st.success(f"👤 Utilisateur: {current_bot.conversation_context['user_name']}")
         
         # Contexte de conversation
-        if bot.conversation_context["waiting_for_clarification"]:
+        if current_bot.conversation_context["waiting_for_clarification"]:
             st.warning("⏳ Clarification attendue")
-            st.write(f"**Sujet:** {bot.conversation_context.get('context_topic', 'Non défini')}")
+            st.write(f"**Sujet:** {current_bot.conversation_context.get('context_topic', 'Non défini')}")
             
-            if bot.conversation_context["context_articles"]:
+            if current_bot.conversation_context["context_articles"]:
                 st.write("**Articles en contexte:**")
-                st.write(", ".join(bot.conversation_context["context_articles"]))
+                st.write(", ".join(current_bot.conversation_context["context_articles"]))
         else:
-            st.info("💬 Prêt pour toute question")
+            if app_mode == "🏛️ Expert Fiscalité des collectivités territoriales":
+                st.info("🏛️ Prêt pour vos questions territoriales")
+            else:
+                st.info("💬 Prêt pour toute question")
         
         # Historique de recherche
-        if bot.conversation_context.get("search_history"):
+        if current_bot.conversation_context.get("search_history"):
             with st.expander("📜 Historique récent", expanded=False):
-                for search in bot.conversation_context["search_history"][-3:]:
+                for search in current_bot.conversation_context["search_history"][-3:]:
                     st.write(f"• {search['query'][:50]}...")
                     st.caption(f"Articles: {', '.join(search['articles'][:3])}")
         
         # Bouton nouvelle conversation
         if st.button("🔄 Nouvelle Conversation"):
-            st.session_state.messages = [st.session_state.messages[0]]
-            bot._clear_context()
+            if app_mode == "🏛️ Expert Fiscalité des collectivités territoriales":
+                # Réinitialiser pour le mode territorial
+                if "territorial_messages" not in st.session_state:
+                    st.session_state.territorial_messages = []
+                st.session_state.territorial_messages = [
+                    {"role": "assistant", "content": "Bonjour ! Je suis votre expert en fiscalité des collectivités territoriales. Comment puis-je vous aider ?"}
+                ]
+                territorial_bot._clear_context()
+            else:
+                # Réinitialiser pour le mode CGI
+                st.session_state.messages = [st.session_state.messages[0]]
+                bot._clear_context()
+            
             st.session_state.conversation_ids = {}
             st.rerun()
     
@@ -2287,6 +2791,220 @@ Comment puis-je vous apporter une assistance d'excellence ?"""
                     st.rerun()
         else:
             st.info(f"Aucune conversation {feedback_filter.lower()} disponible dans l'historique.")
+    
+    elif app_mode == "🏛️ Expert Fiscalité des collectivités territoriales":
+        st.title("🏛️ Expert Fiscalité des collectivités territoriales")
+        st.subheader("Assistant spécialisé pour les communes, préfectures et régions")
+        
+        # Initialiser les messages pour cet onglet si nécessaire
+        if "territorial_messages" not in st.session_state:
+            st.session_state.territorial_messages = [
+                {"role": "assistant", "content": """🏛️ **Bienvenue dans l'Expert Fiscalité des Collectivités Territoriales !**
+
+Je suis spécialisé dans la fiscalité locale marocaine :
+• Taxes et contributions communales
+• Impôts des préfectures et provinces
+• Fiscalité régionale
+• Répartition des recettes fiscales
+
+Comment puis-je vous aider avec la fiscalité territoriale ?"""}
+            ]
+        
+        # Dictionnaire pour stocker les IDs de conversation territoriales
+        if "territorial_conversation_ids" not in st.session_state:
+            st.session_state.territorial_conversation_ids = {}
+        
+        # Ajouter un état pour le feedback territorial
+        if "territorial_feedback_mode" not in st.session_state:
+            st.session_state.territorial_feedback_mode = None
+            
+        if "territorial_message_index" not in st.session_state:
+            st.session_state.territorial_message_index = -1
+        
+        # Fonction pour activer le mode feedback territorial
+        def activate_territorial_feedback(button_type, msg_index):
+            st.session_state.territorial_feedback_mode = button_type
+            st.session_state.territorial_message_index = msg_index
+            st.rerun()
+        
+        # Fonction pour enregistrer le feedback territorial
+        def save_territorial_feedback(feedback_type, feedback_comment, msg_index):
+            if msg_index in st.session_state.territorial_conversation_ids:
+                conversation_id = st.session_state.territorial_conversation_ids[msg_index]
+                success = db.update_feedback(
+                    conversation_id=conversation_id,
+                    feedback_type=feedback_type,
+                    feedback_comment=feedback_comment
+                )
+                return success
+            return False
+        
+        # Zone de chat principale
+        for i, message in enumerate(st.session_state.territorial_messages):
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+                
+                # Ajouter les boutons de feedback après chaque réponse de l'assistant
+                if message["role"] == "assistant" and i > 0:  # Ne pas ajouter pour le message d'accueil
+                    col1, col2, col3, col4 = st.columns([1, 1, 1, 10])
+                    with col1:
+                        st.button("🔄", key=f"territorial_refresh_{i}", on_click=activate_territorial_feedback, args=("refresh", i))
+                    with col2:
+                        st.button("❌", key=f"territorial_negative_{i}", on_click=activate_territorial_feedback, args=("negative", i))
+                    with col3:
+                        st.button("✅", key=f"territorial_positive_{i}", on_click=activate_territorial_feedback, args=("positive", i))
+        
+        # Afficher la zone de commentaire si un bouton a été cliqué
+        if st.session_state.territorial_feedback_mode:
+            button_type = st.session_state.territorial_feedback_mode
+            msg_index = st.session_state.territorial_message_index
+            
+            feedback_titles = {
+                "refresh": "💬 Commentaire pour reformuler la réponse",
+                "negative": "💬 Commentaire sur ce qui n'a pas fonctionné",
+                "positive": "💬 Commentaire positif"
+            }
+            
+            feedback_placeholders = {
+                "refresh": "Expliquez comment vous souhaitez que la réponse soit reformulée...",
+                "negative": "Expliquez ce qui n'a pas fonctionné dans cette réponse...",
+                "positive": "Partagez ce que vous avez apprécié dans cette réponse..."
+            }
+            
+            st.subheader(feedback_titles[button_type])
+            feedback = st.text_area("Votre commentaire (optionnel):", placeholder=feedback_placeholders[button_type], key="territorial_feedback_text")
+            
+            col1, col2 = st.columns([1, 10])
+            with col1:
+                if st.button("Envoyer", key="territorial_send_feedback"):
+                    # Enregistrer le feedback dans la base de données
+                    success = save_territorial_feedback(button_type, feedback, msg_index)
+                    
+                    if success:
+                        st.success("✅ Merci pour votre commentaire! Il a été enregistré avec succès.")
+                    else:
+                        st.warning("⚠️ Le commentaire n'a pas pu être enregistré. Veuillez réessayer.")
+                    
+                    # Désactiver le mode feedback après un court délai
+                    import time
+                    time.sleep(1.5)  # Attendre 1.5 secondes pour que l'utilisateur puisse voir le message
+                    
+                    st.session_state.territorial_feedback_mode = None
+                    st.session_state.territorial_message_index = -1
+                    st.rerun()
+            
+            with col2:
+                if st.button("Annuler", key="territorial_cancel_feedback"):
+                    # Désactiver le mode feedback
+                    st.session_state.territorial_feedback_mode = None
+                    st.session_state.territorial_message_index = -1
+                    st.rerun()
+        
+        # Zone de saisie
+        if prompt := st.chat_input("💬 Posez votre question sur la fiscalité territoriale..."):
+            # Ajouter le message utilisateur
+            st.session_state.territorial_messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            
+            # Traiter la question
+            with st.chat_message("assistant"):
+                message_placeholder = st.empty()
+                
+                # Message d'attente intelligent
+                if any(word in prompt.lower() for word in ["commune", "communal", "municipal"]):
+                    message_placeholder.markdown(f"🏘️ Recherche sur la fiscalité communale...")
+                elif any(word in prompt.lower() for word in ["région", "régional"]):
+                    message_placeholder.markdown(f"🌍 Recherche sur la fiscalité régionale...")
+                elif any(word in prompt.lower() for word in ["préfecture", "province"]):
+                    message_placeholder.markdown(f"🏢 Recherche sur la fiscalité préfectorale/provinciale...")
+                elif any(word in prompt.lower() for word in ["répartition", "bénéficiaire"]):
+                    message_placeholder.markdown(f"📊 Recherche sur la répartition des taxes...")
+                else:
+                    message_placeholder.markdown(f"🔍 Recherche dans la fiscalité territoriale...")
+                
+                with st.spinner("Traitement en cours..."):
+                    result = territorial_bot.process_query_excellence(prompt, st.session_state.territorial_messages)
+                
+                # Afficher la réponse
+                response = result["response"]
+                message_placeholder.markdown(response)
+                
+                # Ajouter au chat
+                st.session_state.territorial_messages.append({"role": "assistant", "content": response})
+                
+                # Sauvegarder l'ID de conversation
+                if result.get("conversation_id"):
+                    msg_index = len(st.session_state.territorial_messages) - 1
+                    st.session_state.territorial_conversation_ids[msg_index] = result["conversation_id"]
+                
+                # Ajouter les boutons de feedback pour cette nouvelle réponse
+                col1, col2, col3, col4 = st.columns([1, 1, 1, 10])
+                msg_index = len(st.session_state.territorial_messages) - 1
+                with col1:
+                    st.button("🔄", key=f"territorial_refresh_{msg_index}", on_click=activate_territorial_feedback, args=("refresh", msg_index))
+                with col2:
+                    st.button("❌", key=f"territorial_negative_{msg_index}", on_click=activate_territorial_feedback, args=("negative", msg_index))
+                with col3:
+                    st.button("✅", key=f"territorial_positive_{msg_index}", on_click=activate_territorial_feedback, args=("positive", msg_index))
+                
+                # Métriques détaillées
+                intent = result.get("intent", "unknown")
+                
+                if intent in ["fiscal_question", "general_question"]:
+                    with st.expander("📊 Analyse détaillée de la recherche territoriale", expanded=False):
+                        # Première ligne de métriques
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            st.metric("Articles FCT", result["fct_articles"])
+                        
+                        with col2:
+                            st.metric("Temps", f"{result['execution_time']:.2f}s")
+                        
+                        with col3:
+                            st.metric("Articles trouvés", len(result["articles_found"]))
+                        
+                        with col4:
+                            context_text = "Avec contexte" if result.get("context_used") else "Sans contexte"
+                            st.metric("Mode", context_text)
+                        
+                        # Informations détaillées
+                        st.success(f"🏛️ Méthode: {result.get('search_method', 'fct_territorial')}")
+                        
+                        if result["articles_found"]:
+                            st.write("**Articles consultés:**")
+                            articles_display = ", ".join(result["articles_found"][:10])
+                            if len(result["articles_found"]) > 10:
+                                articles_display += f" (+{len(result['articles_found'])-10} autres)"
+                            st.write(articles_display)
+                        
+                        # Logs techniques (optionnel)
+                        if st.checkbox("🔧 Logs techniques détaillés", key=f"territorial_debug_{len(st.session_state.territorial_messages)}"):
+                            st.write("**Logs de recherche:**")
+                            for log in result["debug_logs"][-20:]:  # Derniers 20 logs
+                                if "✅" in log:
+                                    st.success(log)
+                                elif "❌" in log:
+                                    st.error(log)
+                                elif "🔄" in log:
+                                    st.info(log)
+                                else:
+                                    st.text(log)
+                
+                elif intent in ["greetings", "presentation_request", "help_request"]:
+                    with st.expander("ℹ️ Interaction conversationnelle territoriale", expanded=False):
+                        st.success(f"Type: {intent}")
+                        st.info(f"Méthode: {result.get('search_method')}")
+                        st.info(f"Temps: {result['execution_time']:.3f}s")
+                        
+                        # Afficher les capacités du système territorial
+                        st.write("**Capacités actives:**")
+                        st.write("• Recherche dans la collection FCT")
+                        st.write("• Enrichissement par synonymes territoriaux")
+                        st.write("• Détection de contexte territorial")
+                        st.write("• Spécialisation communes/préfectures/régions")
+                        st.write("• Analyse des répartitions fiscales")
 
 if __name__ == "__main__":
     main()
