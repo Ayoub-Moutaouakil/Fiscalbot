@@ -1089,38 +1089,29 @@ Extraits du CGI:
             
             # Définir les patterns de recherche directe
             direct_search_patterns = {
-                # Pour l'industrie du plastique
-                "plastique": {
-                    "keywords": ["plastique", "matière plastique", "produits en plastique", "industrie du plastique"],
-                    "doc_types": ["décret"],
-                    "content_patterns": [
-                        r"industrie\s+du\s+plastique",
-                        r"industrie\s+des?\s+produits\s+en\s+plastique",
-                        r"fabrication\s+de\s+produits\s+en\s+plastique",
-                        r"industrie\s+des?\s+matières?\s+plastiques?"
-                    ]
-                },
-                # Pour l'indemnité de représentation
-                "représentation": {
-                    "keywords": ["représentation", "indemnité de représentation"],
-                    "doc_types": ["note_service", "note_circulaire"],
-                    "content_patterns": [
-                        r"indemnité\s+de\s+représentation.*?(\d+\s*%)",
-                        r"représentation.*?(\d+\s*%)\s*du\s+salaire",
-                        r"l'exonération\s+est\s+plafonnée\s+à\s+(\d+\s*%)"
-                    ]
-                },
-                # Pour d'autres cas spécifiques
-                "exonération": {
-                    "keywords": ["exonération", "exonéré", "activités industrielles"],
-                    "doc_types": ["décret", "note_circulaire"],
-                    "content_patterns": [
-                        r"activités\s+industrielles\s+exonérées",
-                        r"liste\s+des\s+activités",
-                        r"sociétés\s+industrielles\s+bénéficiant"
-                    ]
-                }
-            }
+        # Pour l'industrie (chaussures, plastique, etc.)
+        "industrie": {
+            "keywords": ["plastique", "chaussures", "fabrication", "industrie", "activités industrielles"],
+            "doc_types": ["décret"],
+            "content_patterns": [
+                r"industrie\s+du\s+plastique",
+                r"industrie\s+de\s+la\s+chaussure",
+                r"fabrication\s+de\s+chaussures",
+                r"activités\s+industrielles\s+exonérées",
+                r"liste\s+des\s+activités"
+            ]
+        },
+        # Pour les indemnités
+        "indemnité": {
+            "keywords": ["indemnité", "plafond", "représentation", "caisse"],
+            "doc_types": ["note_service", "note_circulaire"],
+            "content_patterns": [
+                r"indemnité\s+de\s+(?:représentation|caisse).*?(\d+\s*%|\d+\s*dirhams?)",
+                r"plafond.*?(\d+\s*%|\d+\s*dirhams?)",
+                r"exonération.*?plafonné.*?(\d+\s*%)"
+            ]
+        }
+    }
             
             # Détecter le type de recherche
             search_type = None
@@ -1339,16 +1330,16 @@ Extraits du CGI:
         return list(set(concepts))[:15]  # Maximum 15 concepts uniques
     
     def process_annexes_unified(self, query, cgi_response, annexe_results):
-        """Traite TOUTES les annexes en UN SEUL appel Gemini comme pour le CGI"""
+        """Traite TOUTES les annexes et génère une réponse constructive qui explique les changements"""
         
         if not annexe_results:
             return ""
         
-        # 1. Construire le contexte de TOUTES les annexes (comme pour le CGI)
+        # 1. Construire le contexte de TOUTES les annexes avec extraction ciblée
         annexe_context = ""
         annexes_info = []
         
-        for i, result in enumerate(annexe_results[:5]):  # Max 5 annexes pour plus de pertinence
+        for i, result in enumerate(annexe_results[:5]):  # Max 5 annexes
             payload = result.payload
             type_doc = payload.get("type", "Document")
             numero = payload.get("numero", "")
@@ -1366,102 +1357,133 @@ Extraits du CGI:
             if articles_lies:
                 annexe_context += f"Articles liés: {', '.join(str(a) for a in articles_lies)}\n"
             
-            # Pour l'industrie du plastique - extraire la partie pertinente
-            if "plastique" in query.lower() and payload.get("has_plastique"):
-                # Chercher la section spécifique
-                sections_patterns = [
-                    r"8[-–]\s*Industrie\s+chimique(.*?)(?=\d+[-–]|$)",
-                    r"10[-–]\s*Industrie\s+des\s+produits\s+en\s+caoutchouc\s+et\s+en\s+plastique(.*?)(?=\d+[-–]|$)"
-                ]
-                
-                section_found = False
-                for pattern in sections_patterns:
-                    match = re.search(pattern, contenu, re.IGNORECASE | re.DOTALL)
-                    if match:
-                        section_content = match.group(0)
-                        if "plastique" in section_content.lower():
-                            annexe_context += f"Contenu (extrait pertinent): {section_content[:1000]}\n"
-                            section_found = True
-                            break
-                
-                if not section_found:
-                    # Chercher directement la mention du plastique
-                    plastic_match = re.search(r"(.*?industrie\s+du\s+plastique.*?)", contenu, re.IGNORECASE)
-                    if plastic_match:
-                        start = max(0, plastic_match.start() - 200)
-                        end = min(len(contenu), plastic_match.end() + 200)
-                        annexe_context += f"Contenu (extrait): ...{contenu[start:end]}...\n"
+            # EXTRACTION CIBLÉE selon le type de question
+            query_lower = query.lower()
+            
+            # Pour l'industrie du plastique - extraire les sections pertinentes
+            if "plastique" in query_lower or "chaussures" in query_lower or "fabrication" in query_lower:
+                if "décret" in type_doc.lower() and payload.get("has_plastique"):
+                    # Chercher les sections d'activités industrielles
+                    sections_patterns = [
+                        r"(\d+[-–]\s*[^\n]*(?:plastique|chaussures|cuir|textile)[^\n]*(?:\n[^\d\n][^\n]*)*)",
+                        r"(\d+[-–]\s*Industrie\s+[^\n]*(?:\n[^\d\n][^\n]*)*)",
+                        r"(Industrie\s+des?\s+produits\s+en\s+[^\n]*(?:\n[^\d\n][^\n]*)*)"
+                    ]
+                    
+                    extracted_sections = []
+                    for pattern in sections_patterns:
+                        matches = re.findall(pattern, contenu, re.IGNORECASE | re.MULTILINE)
+                        extracted_sections.extend(matches)
+                    
+                    if extracted_sections:
+                        annexe_context += "Sections pertinentes extraites:\n"
+                        for section in extracted_sections[:3]:  # Limiter à 3 sections
+                            annexe_context += f"- {section.strip()}\n"
+                    else:
+                        # Fallback: chercher directement les mentions
+                        relevant_lines = []
+                        for line in contenu.split('\n'):
+                            if any(term in line.lower() for term in ['plastique', 'chaussures', 'cuir', 'textile', 'industrie']):
+                                relevant_lines.append(line.strip())
+                        
+                        if relevant_lines:
+                            annexe_context += "Lignes pertinentes:\n"
+                            for line in relevant_lines[:5]:
+                                annexe_context += f"- {line}\n"
+                else:
+                    annexe_context += f"Contenu: {contenu[:1000]}...\n"
+            
+            # Pour les indemnités (représentation, caisse, etc.)
+            elif any(term in query_lower for term in ['indemnité', 'plafond', 'représentation', 'caisse']):
+                if "note" in type_doc.lower():
+                    # Extraire les informations sur les plafonds et pourcentages
+                    plafond_patterns = [
+                        r"([^\n]*(?:plafond|plafonné)[^\n]*(?:\d+\s*%|\d+\s*dirhams?)[^\n]*)",
+                        r"([^\n]*(?:indemnité)[^\n]*(?:\d+\s*%|\d+\s*dirhams?)[^\n]*)",
+                        r"([^\n]*(?:\d+\s*%)[^\n]*(?:salaire|base)[^\n]*)"
+                    ]
+                    
+                    extracted_info = []
+                    for pattern in plafond_patterns:
+                        matches = re.findall(pattern, contenu, re.IGNORECASE)
+                        extracted_info.extend(matches)
+                    
+                    if extracted_info:
+                        annexe_context += "Informations sur les plafonds extraites:\n"
+                        for info in extracted_info[:3]:
+                            annexe_context += f"- {info.strip()}\n"
                     else:
                         annexe_context += f"Contenu: {contenu[:1500]}...\n"
+                else:
+                    annexe_context += f"Contenu: {contenu[:1500]}...\n"
+            
             else:
-                # Pour les autres cas, limiter le contenu
+                # Pour les autres cas, contenu complet mais limité
                 annexe_context += f"Contenu: {contenu[:1500]}"
                 if len(contenu) > 1500:
                     annexe_context += "..."
                 annexe_context += "\n"
         
-        # 2. UN SEUL appel à Gemini avec TOUT le contexte des annexes
-        unified_prompt = f"""Tu es AhmedTax, expert fiscal marocain analysant des documents d'application du CGI.
+        # 2. NOUVEAU PROMPT pour générer une réponse constructive
+        unified_prompt = f"""Tu es AhmedTax, expert fiscal marocain. Tu dois analyser les documents d'application et générer une RÉPONSE CONSTRUCTIVE qui explique ce qui change ou se précise avec ces documents.
 
-    QUESTION DE L'UTILISATEUR: "{query}"
+QUESTION DE L'UTILISATEUR: "{query}"
 
-    RÉPONSE CGI DÉJÀ FOURNIE (À NE PAS RÉPÉTER):
-    {cgi_response}
+RÉPONSE CGI DÉJÀ FOURNIE:
+{cgi_response}
 
-    ANALYSE REQUISE:
-    Tu dois analyser les documents d'application ci-dessous et extraire UNIQUEMENT ce qui COMPLÈTE ou PRÉCISE la réponse CGI ci-dessus.
+DOCUMENTS D'APPLICATION À ANALYSER:
+{annexe_context}
 
-    DOCUMENTS D'APPLICATION À ANALYSER (5 DOCUMENTS):
-    {annexe_context}
+INSTRUCTIONS POUR UNE RÉPONSE CONSTRUCTIVE:
+1. ANALYSE la réponse CGI et identifie les points qui nécessitent des précisions
+2. EXTRAIT des documents d'application les informations spécifiques qui complètent ou précisent la réponse CGI
+3. GÉNÈRE une réponse constructive qui EXPLIQUE concrètement ce qui change ou se précise
+4. INTÈGRE les informations trouvées dans une explication fluide et pratique
+5. DONNE des réponses définitives basées sur les documents trouvés
 
-    INSTRUCTIONS CRITIQUES:
-    1. Lis d'abord attentivement la réponse CGI fournie
-    2. Pour chaque document, identifie UNIQUEMENT les éléments qui:
-    - Complètent la réponse CGI (détails non mentionnés)
-    - Précisent des points évoqués dans le CGI (plafonds, pourcentages, listes détaillées)
-    - Apportent des clarifications pratiques
-    3. Si un document n'apporte RIEN de nouveau par rapport à la réponse CGI, NE PAS le mentionner
+STRUCTURE DE LA RÉPONSE:
+- Commencer par identifier ce qui était imprécis dans la réponse CGI
+- Expliquer concrètement ce que les documents d'application apportent comme précisions
+- Donner la réponse finale claire et pratique
 
-    EXEMPLES DE CE QU'ON CHERCHE:
-    - Si le CGI dit "activités fixées par voie réglementaire" → Le décret donne LA LISTE
-    - Si le CGI dit "dans les conditions prévues" → La circulaire donne LES CONDITIONS
-    - Si le CGI mentionne un plafond → La note de service précise LE MONTANT
+EXEMPLES de réponses constructives attendues:
 
-    RÈGLES STRICTES:
-    - Maximum 3-4 lignes par document pertinent
-    - NE JAMAIS répéter ce qui est dans la réponse CGI
-    - Citer précisément les éléments nouveaux (chiffres, listes, conditions, pourcentage)
-    - Format concis et pratique
+Pour une question sur les activités industrielles exonérées:
+"La réponse CGI mentionnait que les activités industrielles exonérées sont 'fixées par voie réglementaire' sans donner la liste. Les documents d'application permettent maintenant de répondre précisément : OUI, votre société de fabrication de chaussures peut bénéficier de l'exonération car l'industrie de la chaussure figure explicitement au point X de la liste des activités industrielles exonérées selon le décret n° Y."
 
-    Si AUCUN document n'apporte d'information nouvelle, réponds simplement: "Aucune précision complémentaire dans les textes d'application."
+Pour une question sur les plafonds d'indemnités:
+"La réponse CGI indiquait que les indemnités doivent être justifiées sans préciser le plafond. Les documents d'application apportent la précision manquante : le plafond de l'indemnité de caisse admise en exonération est fixé à X dirhams ou Y% du salaire de base selon la note de service DGI."
 
-    Format attendu pour les documents pertinents:
-    📋 **TEXTES D'APPLICATION ET CIRCULAIRES :**
+TON ET STYLE:
+- Réponse fluide et naturelle, pas de format de citation
+- Explication claire de ce qui change par rapport à la réponse CGI
+- Réponse définitive et pratique pour l'utilisateur
+- Éviter les formules comme "il faut consulter" - donner directement la réponse
 
-    📄/📜/📝 **[Type] n° [Numéro]** ([Date]):
-    [Information nouvelle et pratique en 2-3 lignes maximum]"""
+GÉNÈRE une réponse constructive qui explique concrètement ce que les annexes apportent comme changement ou précision à la réponse CGI."""
 
         try:
             model = genai.GenerativeModel("gemini-2.0-flash")
             response = model.generate_content(
                 unified_prompt,
                 generation_config={
-                    "temperature": 0.1,
-                    "max_output_tokens": 800,
+                    "temperature": 0.2,  # Légèrement plus créatif pour une réponse fluide
+                    "max_output_tokens": 1200,  # Plus d'espace pour une réponse constructive
                 }
             )
             
             annexe_response = response.text.strip()
             
-            # Si Gemini n'a trouvé aucune information pertinente
-            if not annexe_response or len(annexe_response) < 50 or "Aucune précision complémentaire" in annexe_response:
+            # Vérifier que la réponse est constructive et substantielle
+            if (not annexe_response or len(annexe_response) < 100 or 
+                "Aucune précision complémentaire" in annexe_response or
+                "il faut consulter" in annexe_response.lower() or
+                "documents d'application" not in annexe_response.lower()):
                 return ""
             
-            # Retourner la réponse formatée
-            if not annexe_response.startswith("📋"):
-                return f"\n\n📋 **TEXTES D'APPLICATION ET CIRCULAIRES :**\n{annexe_response}"
-            else:
-                return f"\n\n{annexe_response}"
+            # Retourner la réponse constructive avec un séparateur clair
+            return f"\n\n**📋 PRÉCISIONS APPORTÉES PAR LES TEXTES D'APPLICATION :**\n\n{annexe_response}"
                 
         except Exception as e:
             self.log_debug(f"❌ Erreur traitement unifié annexes: {str(e)}")
