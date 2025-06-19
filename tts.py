@@ -934,6 +934,58 @@ Je suis optimisé pour comprendre le langage naturel et les synonymes !"""
             
             articles_found.add(article_num)
         
+        # NOUVELLE LOGIQUE: Si l'article 19 est trouvé, récupérer automatiquement l'article 247 partie 4
+        if "19" in articles_found:
+            self.log_debug("🔄 Article 19 détecté - Récupération automatique de l'article 247 partie 4")
+            try:
+                # Rechercher l'article 247 avec split_part = 4
+                filter_condition = Filter(
+                    must=[
+                        FieldCondition(
+                            key="article",
+                            match=MatchValue(value="247")
+                        ),
+                        FieldCondition(
+                            key="split_part",
+                            match=MatchValue(value=4)
+                        )
+                    ]
+                )
+                
+                # Rechercher dans toutes les collections CGI
+                for collection_name in ["main", "parent", "sections"]:
+                    if collection_name in self.collections:
+                        try:
+                            results_247 = self.qdrant_client.search(
+                                collection_name=self.collections[collection_name],
+                                query_vector=[0.0] * 1024,
+                                query_filter=filter_condition,
+                                limit=1
+                            )
+                            
+                            if results_247:
+                                result_247 = results_247[0]
+                                metadata_247 = result_247.payload
+                                article_num_247 = metadata_247.get("article", "247")
+                                article_name_247 = metadata_247.get("nom_article", "Dispositions transitoires")
+                                content_247 = metadata_247.get("contenu", "")
+                                
+                                # Ajouter l'article 247 partie 4 au contexte
+                                cgi_context += f"\n--- ARTICLE {article_num_247} - PARTIE 4 (Taux transitoires IS 2025) ---\n"
+                                cgi_context += f"Titre: {article_name_247}\n"
+                                cgi_context += f"Contenu: {content_247}\n"
+                                
+                                articles_found.add(article_num_247)
+                                self.log_debug("✅ Article 247 partie 4 ajouté automatiquement au contexte")
+                                break
+                                
+                        except Exception as e:
+                            self.log_debug(f"❌ Erreur recherche article 247 partie 4 dans {collection_name}: {str(e)}")
+                            continue
+                            
+            except Exception as e:
+                self.log_debug(f"❌ Erreur lors de la récupération automatique de l'article 247 partie 4: {str(e)}")
+        
         # Sauvegarder les articles trouvés pour le contexte
         self.conversation_context["last_articles"] = list(articles_found)
         
