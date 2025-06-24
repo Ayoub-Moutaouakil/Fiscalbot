@@ -1103,7 +1103,16 @@ Extraits du CGI:
                 }
             )
             
-            return response.text
+            fct_response = response.text
+            
+            # NOUVELLE FONCTIONNALITÉ : Recherche dans les annexes FCT
+            self.log_debug("🔍 Recherche complémentaire dans les annexes FCT...")
+            annexe_results = self.search_fct_annexes(query, limit=self.config["annexe_search_limit"])
+            
+            # Ajouter les précisions des annexes si pertinentes
+            final_response = self.add_annexe_to_fct_response(fct_response, annexe_results, query)
+            
+            return final_response
             
         except Exception as e:
             return f"❌ Erreur lors de la génération de la réponse: {str(e)}"
@@ -1871,13 +1880,18 @@ class TerritorialFiscalBot:
         self.synonym_manager = synonym_manager
         self.db = db
         
-        # Collection FCT pour les collectivités territoriales
-        self.collection_name = "FCT"
+        # Collections pour les collectivités territoriales
+        self.collections = {
+            "main": "FCT",
+            "annexe": "FCT_Annexes"  # Nouvelle collection pour les annexes FCT
+        }
         
         # Configuration optimisée
         self.config = {
             "search_threshold": 0.08,
-            "search_limit": 12
+            "search_limit": 12,
+            "annexe_score_threshold": 0.05,  # Seuil très bas pour capturer plus d'annexes
+            "annexe_search_limit": 10       # Limite pour les annexes
         }
         
         # Logs de debug
@@ -2069,7 +2083,7 @@ Posez votre question sur la fiscalité territoriale !"""
             
             # Recherche dans Qdrant
             search_results = self.qdrant_client.search(
-                collection_name=self.collection_name,
+                collection_name=self.collections["main"],
                 query_vector=query_vector,
                 limit=limit,
                 score_threshold=self.config["search_threshold"]
@@ -2081,6 +2095,145 @@ Posez votre question sur la fiscalité territoriale !"""
         except Exception as e:
             self.log_debug(f"❌ Erreur recherche FCT: {str(e)}")
             return []
+    
+    def search_fct_annexes(self, query: str, limit: int = 10):
+        """Recherche dans les annexes FCT (collection FCT_Annexes)"""
+        try:
+            # Enrichir la requête avec des synonymes
+            enriched_query = self.synonym_manager.expand_query(query)
+            self.log_debug(f"🔍 Recherche annexes FCT: {enriched_query}")
+            
+            # Générer l'embedding avec Voyage
+            embedding_response = voyage_client.embed(
+                texts=[enriched_query],
+                model="voyage-law-2"
+            )
+            query_vector = embedding_response.embeddings[0]
+            
+            # Recherche dans Qdrant
+            search_results = self.qdrant_client.search(
+                collection_name=self.collections["annexe"],
+                query_vector=query_vector,
+                limit=limit,
+                score_threshold=self.config["annexe_score_threshold"]
+            )
+            
+            self.log_debug(f"✅ Trouvé {len(search_results)} annexes FCT")
+            return search_results
+            
+        except Exception as e:
+            self.log_debug(f"❌ Erreur recherche annexes FCT: {str(e)}")
+            return []
+    
+    def process_fct_annexes(self, query, fct_response, annexe_results):
+        """Traite les annexes FCT et génère une réponse constructive"""
+        
+        if not annexe_results:
+            return ""
+        
+        # Construire le contexte des annexes
+        annexe_context = ""
+        for i, result in enumerate(annexe_results):
+            metadata = result.payload
+            document = metadata.get("document", "Document")
+            chapitre = metadata.get("chapitre", "")
+            nom_chapitre = metadata.get("nom_chapitre", "")
+            partie = metadata.get("partie", "")
+            nom_partie = metadata.get("nom_partie", "")
+            contenu = metadata.get("contenu", "")
+            
+            annexe_context += f"\n--- DOCUMENT {i+1} ---\n"
+            annexe_context += f"Source: {document}\n"
+            if chapitre:
+                annexe_context += f"Chapitre: {chapitre}\n"
+            if nom_chapitre:
+                annexe_context += f"Nom chapitre: {nom_chapitre}\n"
+            if partie:
+                annexe_context += f"Partie: {partie}\n"
+            if nom_partie:
+                annexe_context += f"Nom partie: {nom_partie}\n"
+            annexe_context += f"Contenu: {contenu}\n"
+        
+        # Prompt unifié pour traiter les annexes FCT
+        unified_prompt = f"""Tu es un expert en fiscalité des collectivités territoriales marocaines.
+
+CONTEXTE:
+L'utilisateur a posé une question sur la fiscalité territoriale et a reçu une réponse basée sur les textes principaux.
+Tu dois maintenant analyser si les documents d'application (notes de service, circulaires) apportent des précisions utiles.
+
+QUESTION UTILISATEUR: "{query}"
+
+RÉPONSE PRINCIPALE DÉJÀ FOURNIE:
+{fct_response}
+
+DOCUMENTS D'APPLICATION TROUVÉS:
+{annexe_context}
+
+INSTRUCTIONS:
+
+1. **VÉRIFICATION DE PERTINENCE** : Analyse d'abord si les documents d'application apportent des précisions utiles et pertinentes à la question posée et à la réponse principale.
+
+2. **SI LES DOCUMENTS NE SONT PAS PERTINENTS** (hors sujet, pas de précisions utiles, informations déjà couvertes) :
+   - Réponds EXACTEMENT : "Aucune précisions à apporter"
+   - Ne génère aucune autre réponse
+
+3. **SI LES DOCUMENTS SONT PERTINENTS** :
+   - EXTRAIT les informations spécifiques qui complètent ou précisent la réponse principale
+   - GÉNÈRE une réponse constructive qui EXPLIQUE concrètement ce qui change ou se précise
+   - CITE les documents par leur nom réel (ex: "Note de service - Loi n° 47-06") et NON par "document 1", "document 2"
+   - INTÈGRE les informations trouvées dans une explication fluide et pratique
+   - DONNE des réponses définitives basées sur les documents trouvés
+
+STRUCTURE DE LA RÉPONSE (si pertinente):
+- Identifier ce qui était imprécis dans la réponse principale
+- Expliquer concrètement ce que les documents d'application apportent comme précisions
+- Citer les documents par leur nom réel
+- Donner la réponse finale claire et pratique
+
+TON ET STYLE:
+- Réponse fluide et naturelle, pas de format de citation
+- Explication claire de ce qui change par rapport à la réponse principale
+- Réponse définitive et pratique pour l'utilisateur
+- Éviter les formules comme "il faut consulter" - donner directement la réponse
+- Citer les documents par leur nom réel, jamais par "document 1", "document 2"
+
+ANALYSE maintenant si les documents apportent des précisions pertinentes et réponds en conséquence."""
+        
+        try:
+            model = genai.GenerativeModel("gemini-2.0-flash")
+            response = model.generate_content(
+                unified_prompt,
+                generation_config={
+                    "temperature": 0.1,
+                    "max_output_tokens": 1200,
+                }
+            )
+            
+            annexe_response = response.text.strip()
+            
+            # Vérifier seulement si la réponse est vide
+            if not annexe_response:
+                return ""
+            
+            # Retourner la réponse constructive avec un séparateur clair
+            return f"\n\n**📋 PRÉCISIONS APPORTÉES PAR LES TEXTES D'APPLICATION :**\n\n{annexe_response}"
+                
+        except Exception as e:
+            self.log_debug(f"❌ Erreur traitement annexes FCT: {str(e)}")
+            return ""
+    
+    def add_annexe_to_fct_response(self, fct_response, annexe_results, query):
+        """Ajoute les informations d'annexe FCT à la réponse principale"""
+        if not annexe_results:
+            return fct_response
+        
+        # Utiliser le traitement unifié avec les résultats d'annexes
+        annexe_info = self.process_fct_annexes(query, fct_response, annexe_results)
+        
+        if annexe_info:
+            return fct_response + annexe_info
+        else:
+            return fct_response
     
     def generate_fct_response(self, query: str, fct_results, use_context=False):
         """Génère une réponse basée sur les documents FCT"""
@@ -2651,7 +2804,10 @@ Comment puis-je vous apporter une assistance d'excellence ?"""
                             st.metric("Articles CGI", result["cgi_articles"])
                         
                         with col2:
-                            st.metric("Documents annexe", result["annexe_docs"])
+                            if "annexe_docs" in result:
+                                st.metric("Documents annexe", result["annexe_docs"])
+                            else:
+                                st.metric("Annexes FCT", result.get("fct_annexes", 0))
                         
                         with col3:
                             st.metric("Temps", f"{result['execution_time']:.2f}s")
