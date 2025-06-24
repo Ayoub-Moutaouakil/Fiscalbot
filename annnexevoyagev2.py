@@ -139,6 +139,7 @@ class OptimizedAnnexeProcessor:
                 
                 # Flags spécifiques
                 "has_plastique": "plastique" in contenu.lower(),
+                "has_chaussures": "chaussures" in contenu.lower() or "industrie de chaussures" in contenu.lower(),
                 "has_representation": "représentation" in contenu.lower() and "10%" in contenu,
                 "has_exoneration": "exonération" in contenu.lower() or "exonéré" in contenu.lower(),
                 

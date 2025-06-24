@@ -986,6 +986,59 @@ Je suis optimisé pour comprendre le langage naturel et les synonymes !"""
             except Exception as e:
                 self.log_debug(f"❌ Erreur lors de la récupération automatique de l'article 247 partie 4: {str(e)}")
         
+        # NOUVELLE LOGIQUE: Si l'article 133 est trouvé, récupérer automatiquement toutes les parties de l'article 129
+        if "133" in articles_found:
+            self.log_debug("🔄 Article 133 détecté - Récupération automatique de toutes les parties de l'article 129")
+            try:
+                # Rechercher toutes les parties de l'article 129 (I, II, III, IV, V)
+                filter_condition_129 = Filter(
+                    must=[
+                        FieldCondition(
+                            key="article",
+                            match=MatchValue(value="129")
+                        )
+                    ]
+                )
+                
+                # Rechercher dans toutes les collections CGI
+                for collection_name in ["main", "parent", "sections"]:
+                    if collection_name in self.collections:
+                        try:
+                            results_129 = self.qdrant_client.search(
+                                collection_name=self.collections[collection_name],
+                                query_vector=[0.0] * 1024,
+                                query_filter=filter_condition_129,
+                                limit=10  # Récupérer plusieurs parties
+                            )
+                            
+                            if results_129:
+                                for result_129 in results_129:
+                                    metadata_129 = result_129.payload
+                                    article_num_129 = metadata_129.get("article", "129")
+                                    article_name_129 = metadata_129.get("nom_article", "Exonérations")
+                                    content_129 = metadata_129.get("contenu", "")
+                                    partie_article = metadata_129.get("partie_article", "")
+                                    
+                                    # Éviter les doublons
+                                    if article_num_129 not in articles_found:
+                                        # Ajouter l'article 129 au contexte
+                                        partie_info = f" - PARTIE {partie_article}" if partie_article else ""
+                                        cgi_context += f"\n--- ARTICLE {article_num_129}{partie_info} (Exonérations droits d'enregistrement) ---\n"
+                                        cgi_context += f"Titre: {article_name_129}\n"
+                                        cgi_context += f"Contenu: {content_129}\n"
+                                        
+                                        articles_found.add(article_num_129)
+                                        self.log_debug(f"✅ Article 129{partie_info} ajouté automatiquement au contexte")
+                                
+                                break  # Sortir après avoir trouvé dans une collection
+                                
+                        except Exception as e:
+                            self.log_debug(f"❌ Erreur recherche article 129 dans {collection_name}: {str(e)}")
+                            continue
+                            
+            except Exception as e:
+                self.log_debug(f"❌ Erreur lors de la récupération automatique de l'article 129: {str(e)}")
+        
         # Sauvegarder les articles trouvés pour le contexte
         self.conversation_context["last_articles"] = list(articles_found)
         
@@ -1198,6 +1251,16 @@ Extraits du CGI:
                             )
                         ]
                     )
+                elif search_type == "industrie" and "chaussures" in query_lower:
+                    # Recherche par filtre sur has_chaussures
+                    filter_condition = Filter(
+                        must=[
+                            FieldCondition(
+                                key="has_chaussures",
+                                match=MatchValue(value=True)
+                            )
+                        ]
+                    )
                 else:
                     # Recherche par type de document
                     filter_condition = Filter(
@@ -1387,7 +1450,7 @@ Extraits du CGI:
         if not annexe_results:
             return ""
         
-        # 1. Construire le contexte de TOUTES les annexes avec extraction ciblée
+        # 1. Construire le contexte de TOUTES les annexes avec le contenu COMPLET
         annexe_context = ""
         annexes_info = []
         
@@ -1409,72 +1472,8 @@ Extraits du CGI:
             if articles_lies:
                 annexe_context += f"Articles liés: {', '.join(str(a) for a in articles_lies)}\n"
             
-            # EXTRACTION CIBLÉE selon le type de question
-            query_lower = query.lower()
-            
-            # Pour l'industrie du plastique - extraire les sections pertinentes
-            if "plastique" in query_lower or "chaussures" in query_lower or "fabrication" in query_lower:
-                if "décret" in type_doc.lower() and payload.get("has_plastique"):
-                    # Chercher les sections d'activités industrielles
-                    sections_patterns = [
-                        r"(\d+[-–]\s*[^\n]*(?:plastique|chaussures|cuir|textile)[^\n]*(?:\n[^\d\n][^\n]*)*)",
-                        r"(\d+[-–]\s*Industrie\s+[^\n]*(?:\n[^\d\n][^\n]*)*)",
-                        r"(Industrie\s+des?\s+produits\s+en\s+[^\n]*(?:\n[^\d\n][^\n]*)*)"
-                    ]
-                    
-                    extracted_sections = []
-                    for pattern in sections_patterns:
-                        matches = re.findall(pattern, contenu, re.IGNORECASE | re.MULTILINE)
-                        extracted_sections.extend(matches)
-                    
-                    if extracted_sections:
-                        annexe_context += "Sections pertinentes extraites:\n"
-                        for section in extracted_sections[:3]:  # Limiter à 3 sections
-                            annexe_context += f"- {section.strip()}\n"
-                    else:
-                        # Fallback: chercher directement les mentions
-                        relevant_lines = []
-                        for line in contenu.split('\n'):
-                            if any(term in line.lower() for term in ['plastique', 'chaussures', 'cuir', 'textile', 'industrie']):
-                                relevant_lines.append(line.strip())
-                        
-                        if relevant_lines:
-                            annexe_context += "Lignes pertinentes:\n"
-                            for line in relevant_lines[:5]:
-                                annexe_context += f"- {line}\n"
-                else:
-                    annexe_context += f"Contenu: {contenu[:1000]}...\n"
-            
-            # Pour les indemnités (représentation, caisse, etc.)
-            elif any(term in query_lower for term in ['indemnité', 'plafond', 'représentation', 'caisse']):
-                if "note" in type_doc.lower():
-                    # Extraire les informations sur les plafonds et pourcentages
-                    plafond_patterns = [
-                        r"([^\n]*(?:plafond|plafonné)[^\n]*(?:\d+\s*%|\d+\s*dirhams?)[^\n]*)",
-                        r"([^\n]*(?:indemnité)[^\n]*(?:\d+\s*%|\d+\s*dirhams?)[^\n]*)",
-                        r"([^\n]*(?:\d+\s*%)[^\n]*(?:salaire|base)[^\n]*)"
-                    ]
-                    
-                    extracted_info = []
-                    for pattern in plafond_patterns:
-                        matches = re.findall(pattern, contenu, re.IGNORECASE)
-                        extracted_info.extend(matches)
-                    
-                    if extracted_info:
-                        annexe_context += "Informations sur les plafonds extraites:\n"
-                        for info in extracted_info[:3]:
-                            annexe_context += f"- {info.strip()}\n"
-                    else:
-                        annexe_context += f"Contenu: {contenu[:1500]}...\n"
-                else:
-                    annexe_context += f"Contenu: {contenu[:1500]}...\n"
-            
-            else:
-                # Pour les autres cas, contenu complet mais limité
-                annexe_context += f"Contenu: {contenu[:1500]}"
-                if len(contenu) > 1500:
-                    annexe_context += "..."
-                annexe_context += "\n"
+            # INCLURE LE CONTENU COMPLET au lieu des extractions ciblées
+            annexe_context += f"Contenu complet:\n{contenu}\n"
         
         # 2. NOUVEAU PROMPT pour générer une réponse constructive
         unified_prompt = f"""Tu es AhmedTax, expert fiscal marocain. Tu dois analyser les documents d'application et générer une RÉPONSE CONSTRUCTIVE qui explique ce qui change ou se précise avec ces documents.
@@ -1484,7 +1483,7 @@ QUESTION DE L'UTILISATEUR: "{query}"
 RÉPONSE CGI DÉJÀ FOURNIE:
 {cgi_response}
 
-DOCUMENTS D'APPLICATION À ANALYSER:
+DOCUMENTS D'APPLICATION À ANALYSER (CONTENU COMPLET):
 {annexe_context}
 
 INSTRUCTIONS POUR UNE RÉPONSE CONSTRUCTIVE:
@@ -1531,7 +1530,8 @@ GÉNÈRE une réponse constructive qui explique concrètement ce que les annexes
             if (not annexe_response or len(annexe_response) < 100 or 
                 "Aucune précision complémentaire" in annexe_response or
                 "il faut consulter" in annexe_response.lower() or
-                "documents d'application" not in annexe_response.lower()):
+                ("aucune information" in annexe_response.lower() or 
+                 "pas de précision" in annexe_response.lower())):
                 return ""
             
             # Retourner la réponse constructive avec un séparateur clair
