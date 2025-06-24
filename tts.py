@@ -1463,75 +1463,92 @@ Extraits du CGI:
             contenu = payload.get("contenu", "")
             articles_lies = payload.get("articles_lies", [])
             
-            # Ajouter au contexte global
-            annexe_context += f"\n\n--- DOCUMENT {i+1} ---\n"
-            annexe_context += f"Type: {type_doc}\n"
-            annexe_context += f"Numéro: {numero}\n"
-            annexe_context += f"Date: {date}\n"
-            annexe_context += f"Objet: {objet}\n"
+            # Construire le nom réel du document
+            nom_document = ""
+            if type_doc and numero:
+                nom_document = f"{type_doc} n° {numero}"
+            elif type_doc:
+                nom_document = type_doc
+            elif numero:
+                nom_document = f"Document n° {numero}"
+            else:
+                nom_document = f"Document {objet[:50]}..." if objet else f"Document sans titre"
+            
+            # Ajouter au contexte global avec le nom réel
+            annexe_context += f"\n\n--- {nom_document.upper()} ---\n"
+            if date:
+                annexe_context += f"Date: {date}\n"
+            if objet:
+                annexe_context += f"Objet: {objet}\n"
             if articles_lies:
                 annexe_context += f"Articles liés: {', '.join(str(a) for a in articles_lies)}\n"
             
             # INCLURE LE CONTENU COMPLET au lieu des extractions ciblées
             annexe_context += f"Contenu complet:\n{contenu}\n"
         
-        # 2. NOUVEAU PROMPT pour générer une réponse constructive
-        unified_prompt = f"""Tu es AhmedTax, expert fiscal marocain. Tu dois analyser les documents d'application et générer une RÉPONSE CONSTRUCTIVE qui explique ce qui change ou se précise avec ces documents.
+        # 2. NOUVEAU PROMPT pour vérifier la pertinence et générer une réponse constructive
+        unified_prompt = f"""Tu es AhmedTax, expert fiscal marocain. Tu dois analyser les documents d'application pour déterminer s'ils apportent des précisions pertinentes à la réponse CGI.
 
 QUESTION DE L'UTILISATEUR: "{query}"
 
 RÉPONSE CGI DÉJÀ FOURNIE:
 {cgi_response}
 
-DOCUMENTS D'APPLICATION À ANALYSER (CONTENU COMPLET):
+DOCUMENTS D'APPLICATION À ANALYSER:
 {annexe_context}
 
-INSTRUCTIONS POUR UNE RÉPONSE CONSTRUCTIVE:
-1. ANALYSE la réponse CGI et identifie les points qui nécessitent des précisions
-2. EXTRAIT des documents d'application les informations spécifiques qui complètent ou précisent la réponse CGI
-3. GÉNÈRE une réponse constructive qui EXPLIQUE concrètement ce qui change ou se précise
-4. INTÈGRE les informations trouvées dans une explication fluide et pratique
-5. DONNE des réponses définitives basées sur les documents trouvés
+INSTRUCTIONS IMPORTANTES:
 
-STRUCTURE DE LA RÉPONSE:
-- Commencer par identifier ce qui était imprécis dans la réponse CGI
+1. **VÉRIFICATION DE PERTINENCE** : Analyse d'abord si les documents d'application apportent des précisions utiles et pertinentes à la question posée et à la réponse CGI.
+
+2. **SI LES DOCUMENTS NE SONT PAS PERTINENTS** (hors sujet, pas de précisions utiles, informations déjà couvertes par le CGI) :
+   - Réponds EXACTEMENT : "Aucune précisions à apporter"
+   - Ne génère aucune autre réponse
+
+3. **SI LES DOCUMENTS SONT PERTINENTS** :
+   - EXTRAIT les informations spécifiques qui complètent ou précisent la réponse CGI
+   - GÉNÈRE une réponse constructive qui EXPLIQUE concrètement ce qui change ou se précise
+   - CITE les documents par leur nom réel (ex: "Note circulaire n° 736", "Décret n° 2-17-743") et NON par "document 1", "document 2"
+   - INTÈGRE les informations trouvées dans une explication fluide et pratique
+   - DONNE des réponses définitives basées sur les documents trouvés
+
+STRUCTURE DE LA RÉPONSE (si pertinente):
+- Identifier ce qui était imprécis dans la réponse CGI
 - Expliquer concrètement ce que les documents d'application apportent comme précisions
+- Citer les documents par leur nom réel
 - Donner la réponse finale claire et pratique
 
 EXEMPLES de réponses constructives attendues:
 
 Pour une question sur les activités industrielles exonérées:
-"La réponse CGI mentionnait que les activités industrielles exonérées sont 'fixées par voie réglementaire' sans donner la liste. Les documents d'application permettent maintenant de répondre précisément : OUI, votre société de fabrication de chaussures peut bénéficier de l'exonération car l'industrie de la chaussure figure explicitement au point X de la liste des activités industrielles exonérées selon le décret n° Y."
+"La réponse CGI mentionnait que les activités industrielles exonérées sont 'fixées par voie réglementaire' sans donner la liste. Le décret n° 2-17-743 du 19 juin 2018 permet maintenant de répondre précisément : OUI, votre société de fabrication de chaussures peut bénéficier de l'exonération car l'industrie de la chaussure figure explicitement au point X de la liste des activités industrielles exonérées."
 
 Pour une question sur les plafonds d'indemnités:
-"La réponse CGI indiquait que les indemnités doivent être justifiées sans préciser le plafond. Les documents d'application apportent la précision manquante : le plafond de l'indemnité de caisse admise en exonération est fixé à X dirhams ou Y% du salaire de base selon la note de service DGI."
+"La réponse CGI indiquait que les indemnités doivent être justifiées sans préciser le plafond. La note de service DGI n° 123 apporte la précision manquante : le plafond de l'indemnité de caisse admise en exonération est fixé à 500 dirhams par mois selon cette note de service."
 
 TON ET STYLE:
 - Réponse fluide et naturelle, pas de format de citation
 - Explication claire de ce qui change par rapport à la réponse CGI
 - Réponse définitive et pratique pour l'utilisateur
 - Éviter les formules comme "il faut consulter" - donner directement la réponse
+- Citer les documents par leur nom réel, jamais par "document 1", "document 2"
 
-GÉNÈRE une réponse constructive qui explique concrètement ce que les annexes apportent comme changement ou précision à la réponse CGI."""
+ANALYSE maintenant si les documents apportent des précisions pertinentes et réponds en conséquence."""
 
         try:
             model = genai.GenerativeModel("gemini-2.0-flash")
             response = model.generate_content(
                 unified_prompt,
                 generation_config={
-                    "temperature": 0.2,  # Légèrement plus créatif pour une réponse fluide
-                    "max_output_tokens": 1200,  # Plus d'espace pour une réponse constructive
+                    "temperature": 0.1,  # Plus déterministe pour la vérification de pertinence
+                    "max_output_tokens": 1200,
                 }
             )
             
             annexe_response = response.text.strip()
             
-            # Vérifier que la réponse est constructive et substantielle
-            if (not annexe_response or len(annexe_response) < 100 or 
-                "Aucune précision complémentaire" in annexe_response or
-                "il faut consulter" in annexe_response.lower() or
-                ("aucune information" in annexe_response.lower() or 
-                 "pas de précision" in annexe_response.lower())):
+            # Vérifier seulement si la réponse est vide
+            if not annexe_response:
                 return ""
             
             # Retourner la réponse constructive avec un séparateur clair
@@ -1786,12 +1803,12 @@ Réponds "NON_PERTINENT" si aucune info utile."""
         # Combiner tous les articles trouvés
         all_article_numbers = list(set(query_article_numbers + cgi_article_numbers))[:6]
         
-        # RECHERCHE ANNEXE AMÉLIORÉE
+        # RECHERCHE ANNEXE AMÉLIORÉE - TOUJOURS EFFECTUÉE
         annexe_results = []
-        if len(original_query) > 10:  # Recherche annexe seulement pour questions substantielles
-            annexe_results = self.search_annexe_excellence(
-                all_article_numbers, original_query, cgi_response
-            )
+        # Supprimer la condition de longueur pour toujours effectuer la recherche annexe
+        annexe_results = self.search_annexe_excellence(
+            all_article_numbers, original_query, cgi_response
+        )
         
         # Réponse finale
         final_response = self.add_annexe_to_response_excellence(
