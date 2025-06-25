@@ -1103,16 +1103,7 @@ Extraits du CGI:
                 }
             )
             
-            fct_response = response.text
-            
-            # NOUVELLE FONCTIONNALITÉ : Recherche dans les annexes FCT
-            self.log_debug("🔍 Recherche complémentaire dans les annexes FCT...")
-            annexe_results = self.search_fct_annexes(query, limit=self.config["annexe_search_limit"])
-            
-            # Ajouter les précisions des annexes si pertinentes
-            final_response = self.add_annexe_to_fct_response(fct_response, annexe_results, query)
-            
-            return final_response
+            return response.text
             
         except Exception as e:
             return f"❌ Erreur lors de la génération de la réponse: {str(e)}"
@@ -1190,7 +1181,7 @@ Extraits du CGI:
     
     # RECHERCHE ANNEXE HYBRIDE - Textuelle + Sémantique
     def search_annexe_excellence(self, article_numbers, query, cgi_response=""):
-        """Recherche hybride dans l'annexe - textuelle directe + sémantique"""
+        """Recherche hybride optimisée dans l'annexe avec enrichissement contextuel"""
         if not query:
             return []
         
@@ -1198,216 +1189,221 @@ Extraits du CGI:
             all_results = {}
             query_lower = query.lower()
             
-            # 1. RECHERCHE TEXTUELLE DIRECTE - Pour les cas spécifiques
-            self.log_debug(f"🔍 Recherche annexe hybride pour: {query[:100]}")
+            self.log_debug(f"🔍 Recherche annexe excellence optimisée pour: {query[:100]}")
             
-            # Définir les patterns de recherche directe
-            direct_search_patterns = {
-        # Pour l'industrie (chaussures, plastique, etc.)
-        "industrie": {
-            "keywords": ["plastique", "chaussures", "fabrication", "industrie", "activités industrielles"],
-            "doc_types": ["décret"],
-            "content_patterns": [
-                r"industrie\s+du\s+plastique",
-                r"industrie\s+de\s+la\s+chaussure",
-                r"fabrication\s+de\s+chaussures",
-                r"activités\s+industrielles\s+exonérées",
-                r"liste\s+des\s+activités"
-            ]
-        },
-        # Pour les indemnités
-        "indemnité": {
-            "keywords": ["indemnité", "plafond", "représentation", "caisse"],
-            "doc_types": ["note_service", "note_circulaire"],
-            "content_patterns": [
-                r"indemnité\s+de\s+(?:représentation|caisse).*?(\d+\s*%|\d+\s*dirhams?)",
-                r"plafond.*?(\d+\s*%|\d+\s*dirhams?)",
-                r"exonération.*?plafonné.*?(\d+\s*%)"
-            ]
-        }
-    }
+            # Patterns de recherche enrichis avec métadonnées
+            enriched_search_patterns = {
+                "arrete_epargne": {
+                    "keywords": ["épargne", "epargne", "education", "logement", "plan"],
+                    "metadata_flags": ["has_epargne"],
+                    "doc_types": ["arrete"],
+                    "content_patterns": [
+                        r"plan\s+d[''']épargne",
+                        r"épargne\s+éducation",
+                        r"épargne\s+logement"
+                    ]
+                },
+                "arrete_normalisation": {
+                    "keywords": ["normalisation", "certification", "accréditation", "csnca", "conseil"],
+                    "metadata_flags": ["has_normalisation", "has_conseil_membres"],
+                    "doc_types": ["arrete"],
+                    "content_patterns": [
+                        r"conseil\s+supérieur\s+de\s+normalisation",
+                        r"certification\s+et\s+accréditation",
+                        r"membres\s+du\s+conseil"
+                    ]
+                },
+                "plastique_industrie": {
+                    "keywords": ["plastique", "industrie", "fabrication", "matière"],
+                    "metadata_flags": ["has_plastique"],
+                    "doc_types": ["decret", "note_circulaire"],
+                    "content_patterns": [
+                        r"industrie\s+du\s+plastique",
+                        r"matière\s+plastique",
+                        r"fabrication.*plastique"
+                    ]
+                },
+                "representation_indemnite": {
+                    "keywords": ["représentation", "indemnité", "plafond", "10%"],
+                    "metadata_flags": ["has_representation"],
+                    "doc_types": ["note_service", "note_circulaire"],
+                    "content_patterns": [
+                        r"indemnité\s+de\s+représentation",
+                        r"plafond.*10\s*%",
+                        r"représentation.*plafonné"
+                    ]
+                }
+            }
             
-            # Détecter le type de recherche
+            # Détecter le type de recherche enrichi
             search_type = None
-            for stype, config in direct_search_patterns.items():
+            for stype, config in enriched_search_patterns.items():
                 if any(kw in query_lower for kw in config["keywords"]):
                     search_type = stype
                     break
             
-            # 2. RECHERCHE TEXTUELLE SI PATTERN DÉTECTÉ - Nouvelle collection optimisée
+            # Recherche avec filtres enrichis si pattern détecté
             if search_type:
-                config = direct_search_patterns[search_type]
-                self.log_debug(f"   Type détecté: {search_type}")
+                config = enriched_search_patterns[search_type]
+                self.log_debug(f"   Type enrichi détecté: {search_type}")
                 
-                # Utiliser les flags de la collection optimisée
-                if search_type == "plastique":
-                    # Recherche par filtre sur has_plastique
-                    filter_condition = Filter(
-                        must=[
-                            FieldCondition(
-                                key="has_plastique",
-                                match=MatchValue(value=True)
-                            )
-                        ]
-                    )
-                elif search_type == "représentation":
-                    # Recherche par filtre sur has_representation
-                    filter_condition = Filter(
-                        must=[
-                            FieldCondition(
-                                key="has_representation", 
-                                match=MatchValue(value=True)
-                            )
-                        ]
-                    )
-                elif search_type == "industrie" and "chaussures" in query_lower:
-                    # Recherche par filtre sur has_chaussures
-                    filter_condition = Filter(
-                        must=[
-                            FieldCondition(
-                                key="has_chaussures",
-                                match=MatchValue(value=True)
-                            )
-                        ]
-                    )
-                else:
-                    # Recherche par type de document
-                    filter_condition = Filter(
-                        must=[
-                            FieldCondition(
-                                key="type",
-                                match=MatchAny(any=config["doc_types"])
-                            )
-                        ]
+                # Construire les filtres basés sur les métadonnées enrichies
+                filter_conditions = []
+                
+                # Filtres par flags de métadonnées
+                for flag in config["metadata_flags"]:
+                    filter_conditions.append(
+                        FieldCondition(key=flag, match=MatchValue(value=True))
                     )
                 
-                try:
-                    # Recherche avec filtre
-                    filtered_results = self.qdrant_client.search(
-                        collection_name=self.collections["annexe"],
-                        query_vector=[0.0] * 1024,  # Vecteur vide car on utilise le filtre
-                        query_filter=filter_condition,
-                        limit=10
+                # Filtres par type de document
+                if config["doc_types"]:
+                    filter_conditions.append(
+                        FieldCondition(key="type", match=MatchAny(any=config["doc_types"]))
                     )
+                
+                # Recherche avec filtres combinés
+                if filter_conditions:
+                    filter_condition = Filter(should=filter_conditions)  # OR logic pour plus de flexibilité
                     
-                    # Analyser chaque résultat filtré
-                    for result in filtered_results:
-                        payload = result.payload
-                        content = payload.get("contenu", "").lower()
-                        score = 0.5  # Score de base pour filtre
+                    try:
+                        filtered_results = self.qdrant_client.search(
+                            collection_name=self.collections["annexe"],
+                            query_vector=[0.0] * 1024,
+                            query_filter=filter_condition,
+                            limit=15
+                        )
                         
-                        # Vérifier les patterns de contenu pour confirmer
-                        for pattern in config["content_patterns"]:
-                            if re.search(pattern, content, re.IGNORECASE):
-                                score += 0.3
-                                self.log_debug(f"   ✅ Pattern trouvé dans {payload.get('type')}")
-                                
-                                # Extraire des infos spécifiques
-                                if search_type == "représentation":
-                                    plafond_match = re.search(pattern, content, re.IGNORECASE)
-                                    if plafond_match and plafond_match.group(1):
-                                        self.log_debug(f"   💰 Plafond trouvé: {plafond_match.group(1)}")
-                                        score += 0.2
-                                break
-                        
-                        # Bonus pour articles liés
-                        if article_numbers:
-                            articles_lies = payload.get("articles_lies", [])
-                            if any(str(art) in [str(a) for a in articles_lies] for art in article_numbers):
-                                score += 0.2
-                                self.log_debug(f"   📎 Articles liés correspondants")
-                        
-                        if score > 0.5:
-                            all_results[result.id] = (result, score, "filter")
+                        # Analyser chaque résultat filtré avec enrichissement
+                        for result in filtered_results:
+                            payload = result.payload
+                            content = payload.get("contenu", "").lower()
+                            keywords = payload.get("keywords", [])
+                            concepts = payload.get("concepts_cles", [])
                             
-                except Exception as e:
-                    self.log_debug(f"❌ Erreur recherche filtrée: {str(e)}")
+                            score = 0.6  # Score de base pour filtre enrichi
+                            
+                            # Bonus pour correspondance de mots-clés enrichis
+                            keyword_matches = sum(1 for kw in keywords if any(term in kw.lower() for term in config["keywords"]))
+                            score += keyword_matches * 0.1
+                            
+                            # Bonus pour concepts clés
+                            concept_matches = sum(1 for concept in concepts if any(term in concept.lower() for term in config["keywords"]))
+                            score += concept_matches * 0.15
+                            
+                            # Vérifier les patterns de contenu
+                            for pattern in config["content_patterns"]:
+                                if re.search(pattern, content, re.IGNORECASE):
+                                    score += 0.2
+                                    self.log_debug(f"   ✅ Pattern enrichi trouvé: {pattern[:30]}...")
+                                    break
+                            
+                            # Bonus pour articles liés
+                            if article_numbers:
+                                articles_lies = payload.get("articles_lies", [])
+                                if any(str(art) in [str(a) for a in articles_lies] for art in article_numbers):
+                                    score += 0.15
+                            
+                            if score > 0.6:
+                                all_results[result.id] = (result, score, "enriched_filter")
+                                
+                    except Exception as e:
+                        self.log_debug(f"❌ Erreur recherche enrichie filtrée: {str(e)}")
             
-            # 3. RECHERCHE SÉMANTIQUE COMPLÉMENTAIRE
+            # Recherche sémantique complémentaire enrichie
             try:
-                # Construire une requête enrichie pour la recherche sémantique
-                enriched_query = query
+                enriched_query = self.synonym_manager.expand_query(query)
                 
-                # Ajouter des termes spécifiques selon le contexte
-                if "plastique" in query_lower:
-                    enriched_query += " industrie du plastique matière plastique fabrication produits plastiques activités industrielles exonérées décret"
-                elif "représentation" in query_lower:
-                    enriched_query += " indemnité représentation plafond 10% salaire base note service"
+                # Ajouter des termes contextuels selon le type détecté
+                if search_type == "arrete_epargne":
+                    enriched_query += " plan épargne éducation logement ministre économie finances"
+                elif search_type == "arrete_normalisation":
+                    enriched_query += " conseil supérieur normalisation certification accréditation membres désignation"
+                elif search_type == "plastique_industrie":
+                    enriched_query += " industrie plastique matière fabrication activités industrielles"
+                elif search_type == "representation_indemnite":
+                    enriched_query += " indemnité représentation plafond 10% salaire base"
                 
                 # Ajouter les articles
                 if article_numbers:
                     enriched_query += f" article {' '.join(str(a) for a in article_numbers[:3])}"
                 
-                # Enrichir avec les synonymes
-                enriched_query = self.synonym_manager.expand_query(enriched_query)
+                self.log_debug(f"🔍 Recherche sémantique enrichie")
                 
-                self.log_debug(f"🔍 Recherche sémantique complémentaire")
-                
-                # Recherche sémantique
                 query_vector = self.get_embedding(enriched_query)
                 
                 semantic_results = self.qdrant_client.search(
                     collection_name=self.collections["annexe"],
                     query_vector=query_vector,
-                    limit=10
+                    limit=12
                 )
                 
-                # Ajouter les résultats sémantiques non trouvés par la recherche textuelle
+                # Ajouter les résultats sémantiques avec bonus enrichi
                 for result in semantic_results:
                     if result.id not in all_results:
-                        # Analyser la pertinence
                         payload = result.payload
-                        content = payload.get("contenu", "").lower()
                         
-                        # Bonus si le contenu contient des termes clés
+                        # Bonus enrichi basé sur les métadonnées
                         bonus = 0
-                        if search_type == "plastique" and ("plastique" in content or payload.get("has_plastique")):
-                            bonus = 0.2
-                        elif search_type == "représentation" and ("représentation" in content or "10%" in content or payload.get("has_representation")):
-                            bonus = 0.2
+                        keywords = payload.get("keywords", [])
+                        concepts = payload.get("concepts_cles", [])
+                        
+                        # Bonus pour correspondance thématique enrichie
+                        if search_type == "arrete_epargne" and payload.get("has_epargne"):
+                            bonus += 0.25
+                        elif search_type == "arrete_normalisation" and (payload.get("has_normalisation") or payload.get("has_conseil_membres")):
+                            bonus += 0.25
+                        elif search_type == "plastique_industrie" and payload.get("has_plastique"):
+                            bonus += 0.25
+                        elif search_type == "representation_indemnite" and payload.get("has_representation"):
+                            bonus += 0.25
+                        
+                        # Bonus pour mots-clés et concepts enrichis
+                        if any(kw.lower() in query_lower for kw in keywords):
+                            bonus += 0.1
+                        if any(concept.lower() in query_lower for concept in concepts):
+                            bonus += 0.15
                         
                         adjusted_score = result.score + bonus
                         
-                        if adjusted_score >= 0.1:  # Seuil très bas
-                            all_results[result.id] = (result, adjusted_score, "semantic")
+                        if adjusted_score >= 0.08:  # Seuil ajusté
+                            all_results[result.id] = (result, adjusted_score, "enriched_semantic")
                 
             except Exception as e:
-                self.log_debug(f"❌ Erreur recherche sémantique: {str(e)}")
+                self.log_debug(f"❌ Erreur recherche sémantique enrichie: {str(e)}")
             
-            # 4. TRIER ET RETOURNER LES MEILLEURS RÉSULTATS
+            # Trier et retourner les meilleurs résultats enrichis
             if all_results:
-                # Trier par score
                 sorted_results = sorted(all_results.values(), key=lambda x: x[1], reverse=True)
                 
-                # Prendre les 3 meilleurs
                 final_results = []
-                for result_data in sorted_results[:3]:
+                for result_data in sorted_results[:5]:  # Top 5 résultats enrichis
                     result = result_data[0]
                     score = result_data[1]
                     method = result_data[2]
                     
-                    self.log_debug(f"   📄 Résultat: {result.payload.get('type')} - Score: {score:.3f} - Méthode: {method}")
-                    
+                    self.log_debug(f"   📄 Résultat enrichi: {result.payload.get('type')} - Score: {score:.3f} - Méthode: {method}")
                     final_results.append(result)
                 
-                self.log_debug(f"📚 {len(final_results)} annexes trouvées")
+                self.log_debug(f"📚 {len(final_results)} annexes enrichies trouvées")
                 return final_results
             
-            # 5. SI AUCUN RÉSULTAT AVEC LA RECHERCHE HYBRIDE, FALLBACK SÉMANTIQUE PURE
-            self.log_debug("⚠️ Aucun résultat hybride, fallback sémantique")
+            # Fallback sémantique standard si aucun résultat enrichi
+            self.log_debug("⚠️ Fallback vers recherche sémantique standard")
             
-            # Recherche sémantique pure avec seuil très bas
             query_vector = self.get_embedding(query)
             fallback_results = self.qdrant_client.search(
                 collection_name=self.collections["annexe"],
                 query_vector=query_vector,
-                limit=3
+                limit=5,
+                score_threshold=0.05
             )
             
-            return [r for r in fallback_results if r.score >= 0.05]
+            self.log_debug(f"📚 {len(fallback_results)} annexes trouvées (fallback)")
+            return fallback_results
             
         except Exception as e:
-            self.log_debug(f"❌ Erreur générale recherche annexe: {str(e)}")
+            self.log_debug(f"❌ Erreur recherche annexe excellence enrichie: {str(e)}")
             return []
     
     def _extract_key_concepts_advanced(self, text):
@@ -2448,6 +2444,13 @@ Extraits des textes sur les collectivités territoriales:
         # Génération de la réponse FCT
         fct_response = self.generate_fct_response(query, fct_results, use_context=use_context)
         
+        # AJOUTER : Recherche dans les annexes FCT
+        self.log_debug("🔍 Recherche complémentaire dans les annexes FCT...")
+        annexe_results = self.search_fct_annexes(query, limit=self.config["annexe_search_limit"])
+        
+        # Ajouter les précisions des annexes si pertinentes
+        final_response = self.add_annexe_to_fct_response(fct_response, annexe_results, query)
+        
         # Extraction des articles
         articles_found = []
         for result in fct_results:
@@ -2456,7 +2459,7 @@ Extraits des textes sur les collectivités territoriales:
                 articles_found.append(article_num)
         
         # Mise à jour du contexte
-        self._update_context(original_query, fct_response, articles_found)
+        self._update_context(original_query, final_response, articles_found)
         
         execution_time = (datetime.now() - start_time).total_seconds()
         
@@ -2478,7 +2481,7 @@ Extraits des textes sur les collectivités territoriales:
         if self.db:
             conversation_id = self.db.save_conversation(
                 question=query,
-                response=fct_response,
+                response=final_response,
                 articles=articles_info,
                 search_method="fct_territorial",
                 semantic_score=fct_results[0].score if fct_results else 0.0,
@@ -2488,8 +2491,9 @@ Extraits des textes sur les collectivités territoriales:
             )
         
         return {
-            "response": fct_response,
+            "response": final_response,
             "fct_articles": len(fct_results),
+            "fct_annexes": len(annexe_results),
             "articles_found": articles_found,
             "execution_time": execution_time,
             "debug_logs": self.get_debug_logs(),
@@ -2806,8 +2810,10 @@ Comment puis-je vous apporter une assistance d'excellence ?"""
                         with col2:
                             if "annexe_docs" in result:
                                 st.metric("Documents annexe", result["annexe_docs"])
+                            elif "fct_annexes" in result:
+                                st.metric("Annexes FCT", result["fct_annexes"])
                             else:
-                                st.metric("Annexes FCT", result.get("fct_annexes", 0))
+                                st.metric("Annexes", 0)
                         
                         with col3:
                             st.metric("Temps", f"{result['execution_time']:.2f}s")
