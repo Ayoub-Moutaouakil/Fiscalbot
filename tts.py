@@ -1,6 +1,6 @@
 import streamlit as st
 import qdrant_client
-from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchAny
+from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchAny, MatchText
 import google.generativeai as genai
 from datetime import datetime, timedelta
 import re
@@ -249,8 +249,69 @@ class FiscalSynonymManager:
             "véhicule": ["voiture", "automobile", "transport de personnes"],
             "amortissement": ["dotation aux amortissements", "dépréciation", "amortir"],
             "crédit-bail": ["leasing", "location avec option d'achat", "LOA"],
-            "représentation": ["indemnité de représentation", "frais de représentation", "prime de représentation"]
-        }
+            "représentation": ["indemnité de représentation", "frais de représentation", "prime de représentation"],
+            
+            # Nouveaux synonymes pour les demandes d'éclaircissement
+            "demande_eclaircissement": [
+                "demande d'éclaircissement", "clarification", "précision", "confirmation",
+                "éclaircissement", "demande de confirmation", "sollicitation d'avis",
+                "demande d'avis", "consultation fiscale", "question fiscale"
+            ],
+            "exoneration_tva": [
+                "exonération TVA", "dispense TVA", "exemption TVA", "hors champ TVA",
+                "non assujettissement", "franchise TVA", "régime d'exonération"
+            ],
+            "location_professionnelle": [
+                "location professionnelle", "bail professionnel", "local professionnel",
+                "location locale", "bail commercial", "location usage professionnel"
+            ],
+            "delais_paiement": [
+                "délais de paiement", "échéance paiement", "terme paiement",
+                "modalités paiement", "conditions paiement", "délai règlement"
+            ],
+            "statut_cfc": [
+                "statut CFC", "Casablanca Finance City", "centre financier",
+                "place financière", "zone financière offshore"
+            ],
+            
+            # NOUVEAUX SYNONYMES POUR CATÉGORISATION
+            "catégorisation": ["categorisation", "classification", "statut", "éligibilité", "critères"],
+            "oea": ["opérateur économique agréé", "operateur economique agree", "statut oea", "facilités douanières"],
+            "audit": ["contrôle", "vérification", "évaluation", "inspection", "examen"],
+            "éligibilité": ["eligibilite", "conditions", "critères", "prérequis", "exigences"],
+            "dossier": ["demande", "candidature", "constitution", "dépôt", "soumission"],
+            "commission": ["comité", "instance", "organe", "évaluation", "examen"],
+            "facilités": ["avantages", "privilèges", "simplifications", "procédures simplifiées"],
+            "sécurité": ["sûreté", "protection", "contrôle", "surveillance"],
+            "chaîne logistique": ["supply chain", "logistique", "transport", "acheminement"],
+            "guichet dédié": ["service spécialisé", "interlocuteur privilégié", "contact dédié"],
+            "renouvellement": ["reconduction", "prolongation", "maintien", "révision"],
+            
+            # NOUVEAUX SYNONYMES POUR CIRCULAIRES
+            "circulaire": ["note circulaire", "circulaire fiscale", "instruction", "directive", "commentaire"],
+            "app": ["accord préalable", "accords préalables", "prix de transfert", "transfer pricing"],
+            "btp": ["bâtiment", "travaux publics", "secteur du bâtiment", "construction", "génie civil"],
+            "prix de transfert": ["transfer pricing", "prix intra-groupe", "transactions contrôlées", "entreprises associées"],
+            "accord préalable": ["app", "advance pricing agreement", "sécurité juridique", "stabilité fiscale"],
+            "entreprises associées": ["groupe", "filiales", "maison mère", "sociétés liées", "entités liées"],
+            "méthode": ["méthode de détermination", "pricing method", "approche", "technique de valorisation"],
+            "comparables": ["transactions comparables", "benchmarking", "analyse comparative", "éléments de comparaison"],
+            "fonctions": ["analyse fonctionnelle", "fonctions exercées", "risques assumés", "actifs utilisés"],
+            "incorporels": ["actifs incorporels", "propriété intellectuelle", "brevets", "marques", "savoir-faire"],
+            "instruction": ["procédure d'instruction", "analyse de la demande", "examen du dossier"],
+            "rencontres préliminaires": ["discussions préalables", "échanges préparatoires", "consultations"],
+            "rapports de suivi": ["monitoring", "surveillance", "contrôle de conformité", "suivi de l'accord"],
+            "unilatéral": ["accord unilatéral", "APA unilatéral", "procédure nationale"],
+            "bilatéral": ["accord bilatéral", "APA bilatéral", "procédure amiable", "convention fiscale"],
+            "multilatéral": ["accord multilatéral", "APA multilatéral", "plusieurs juridictions"],
+            "secteur btp": ["bâtiment et travaux publics", "construction", "génie civil", "promoteurs immobiliers"],
+            "comptabilité": ["tenue comptable", "obligations comptables", "livres comptables", "documents comptables"],
+            "facturation": ["émission de factures", "facturation électronique", "modalités de facturation"],
+            "déclaration fiscale": ["obligations déclaratives", "dépôt de déclarations", "télédéclaration"],
+            "contrôle fiscal": ["vérification fiscale", "audit fiscal", "inspection fiscale"],
+            "pénalités": ["sanctions", "amendes fiscales", "majorations", "intérêts de retard"],
+            "régularisation": ["mise en conformité", "rectification", "ajustement fiscal"]
+            }
         
         # Créer un index inversé pour recherche rapide
         self.inverse_index = {}
@@ -1181,7 +1242,7 @@ Extraits du CGI:
     
     # RECHERCHE ANNEXE HYBRIDE - Textuelle + Sémantique
     def search_annexe_excellence(self, article_numbers, query, cgi_response=""):
-        """Recherche hybride optimisée dans l'annexe avec enrichissement contextuel"""
+        """Recherche hybride optimisée dans l'annexe avec enrichissement contextuel et catégorisation"""
         if not query:
             return []
         
@@ -1193,6 +1254,191 @@ Extraits du CGI:
             
             # Patterns de recherche enrichis avec métadonnées
             enriched_search_patterns = {
+                "note_service_moyens_paiement": {
+                    "keywords": ["moyens paiement", "article 193", "chèques barrés", "virements bancaires", "20 000 dirhams"],
+                    "metadata_flags": ["has_moyens_paiement", "has_cgi_articles"],
+                    "doc_types": ["note_service"],
+                    "content_patterns": [
+                        r"moyens?\s+de\s+paiement",
+                        r"article\s+193",
+                        r"chèques?\s+barrés?",
+                        r"virements?\s+bancaires?",
+                        r"20\s*000\s*dirhams?",
+                        r"transactions?\s+commerciales?"
+                    ]
+                },
+                "note_service_logement_social": {
+                    "keywords": ["logement social", "superficie couverte", "exonération tva", "250 000 dirhams", "parties communes"],
+                    "metadata_flags": ["has_logement_social", "has_tva", "has_superficie"],
+                    "doc_types": ["note_service"],
+                    "content_patterns": [
+                        r"logement\s+social",
+                        r"superficie\s+couverte",
+                        r"exonération.*tva",
+                        r"250\s*000\s*dirhams?",
+                        r"parties?\s+communes?",
+                        r"50[-–]80\s*m²"
+                    ]
+                },
+                "note_service_generale": {
+                    "keywords": ["note service", "note de service", "précision", "clarification", "modalités"],
+                    "metadata_flags": ["has_cgi_articles"],
+                    "doc_types": ["note_service"],
+                    "content_patterns": [
+                        r"note\s+de\s+service",
+                        r"précisions?\s+relatives?",
+                        r"clarifications?",
+                        r"modalités\s+d[''']application",
+                        r"article\s+\d+"
+                    ]
+                },
+                "note_circulaire_retenue_source": {
+                "keywords": ["retenue à la source", "retenue", "source", "prélèvement", "établissements de crédit"],
+                "metadata_flags": ["has_retenue_source", "has_etablissement_credit"],
+                "doc_types": ["note_circulaire"],
+                "content_patterns": [
+                    r"retenue\s+à\s+la\s+source",
+                    r"établissements\s+de\s+crédit",
+                    r"prélèvement\s+fiscal",
+                    r"taux\s+de\s+retenue",
+                    r"revenus\s+de\s+capitaux",
+                    r"dividendes\s+distribués"
+                ]
+                },
+                "note_circulaire_is": {
+                    "keywords": ["impôt sur les sociétés", "is", "bénéfice", "résultat fiscal", "amortissement"],
+                    "metadata_flags": ["has_is"],
+                    "doc_types": ["note_circulaire"],
+                    "content_patterns": [
+                        r"impôt\s+sur\s+les\s+sociétés",
+                        r"bénéfice\s+imposable",
+                        r"résultat\s+fiscal",
+                        r"amortissement\s+déductible",
+                        r"provisions\s+déductibles",
+                        r"charges\s+déductibles"
+                    ]
+                },
+                "note_circulaire_ir": {
+                    "keywords": ["impôt sur le revenu", "ir", "salaire", "revenus professionnels", "revenus fonciers"],
+                    "metadata_flags": ["has_ir"],
+                    "doc_types": ["note_circulaire"],
+                    "content_patterns": [
+                        r"impôt\s+sur\s+le\s+revenu",
+                        r"revenus\s+professionnels",
+                        r"revenus\s+fonciers",
+                        r"salaire\s+imposable",
+                        r"barème\s+progressif",
+                        r"déduction\s+forfaitaire"
+                    ]
+                },
+                "note_circulaire_generale": {
+                    "keywords": ["note circulaire", "circulaire", "modalités", "application", "précisions"],
+                    "metadata_flags": ["type"],
+                    "doc_types": ["note_circulaire"],
+                    "content_patterns": [
+                        r"note\s+circulaire",
+                        r"modalités\s+d[''']application",
+                        r"précisions\s+relatives",
+                        r"commentaires\s+des\s+dispositions",
+                        r"mise\s+en\s+œuvre",
+                        r"instructions\s+pratiques"
+                    ]
+                },
+                "decret_fusion_absorption": {
+                    "keywords": ["fusion", "absorption", "société absorbée", "société absorbante", "évaluation", "stock", "modalités"],
+                    "metadata_flags": ["has_fusion", "has_stock", "has_evaluation", "has_modalites"],
+                    "doc_types": ["decret"],
+                    "content_patterns": [
+                        r"fusion.*absorption",
+                        r"société\s+absorbée.*société\s+absorbante",
+                        r"modalités.*évaluation.*stock",
+                        r"prix\s+de\s+revient\s+initial",
+                        r"valeur\s+d'origine",
+                        r"convention\s+de\s+fusion",
+                        r"état\s+détaillé.*éléments",
+                        r"état\s+de\s+suivi"
+                    ]
+                },
+                "decret_benefice_forfaitaire": {
+                    "keywords": ["bénéfice forfaitaire", "professions exclues", "activités exclues", "régime forfaitaire"],
+                    "metadata_flags": ["has_benefice_forfaitaire", "has_professions_exclues"],
+                    "doc_types": ["decret"],
+                    "content_patterns": [
+                        r"bénéfice\s+forfaitaire",
+                        r"professions.*exclues.*régime",
+                        r"activités.*exclues.*forfaitaire",
+                        r"architectes.*avocats.*médecins",
+                        r"experts-comptables.*ingénieurs",
+                        r"pharmaciens.*notaires.*vétérinaires"
+                    ]
+                },
+                "decret_general": {
+                    "keywords": ["décret", "modalités", "application", "exécution", "bulletin officiel"],
+                    "metadata_flags": ["has_modalites"],
+                    "doc_types": ["decret"],
+                    "content_patterns": [
+                        r"décret.*relatif",
+                        r"modalités.*application",
+                        r"ministre.*économie.*finances",
+                        r"bulletin\s+officiel",
+                        r"exécution.*présent\s+décret"
+                    ]
+                },
+                "guide_auto_entrepreneur": {
+                "keywords": ["auto-entrepreneur", "rnae", "barid", "ice", "micro-entreprise", "auto-emploi"],
+                "metadata_flags": ["has_auto_entrepreneur"],
+                "doc_types": ["guide"],
+                "regime_fiscal": "Auto-entrepreneur",
+                "content_patterns": [
+                    r"auto[\-\s]entrepreneur",
+                    r"rnae|registre\s+national",
+                    r"barid\s+al[\-\s]maghrib",
+                    r"ice|identifiant\s+commun",
+                    r"versement\s+trimestriel"
+                ]
+            },
+            "guide_cpu": {
+                "keywords": ["cpu", "contribution professionnelle unique", "forfaitaire", "coefficient"],
+                "metadata_flags": ["has_cpu"],
+                "doc_types": ["guide"],
+                "regime_fiscal": "CPU",
+                "content_patterns": [
+                    r"contribution\s+professionnelle\s+unique",
+                    r"bénéfice\s+forfaitaire",
+                    r"coefficient",
+                    r"droit\s+complémentaire"
+                ]
+            },
+            "guide_montants_seuils": {
+                "keywords": ["seuil", "montant", "dirhams", "plafond", "limite"],
+                "metadata_flags": ["has_montant", "has_seuil"],
+                "doc_types": ["guide"],
+                "content_patterns": [
+                    r"\d+(?:[\s.]\d+)*\s*(?:dirhams?|dh)",
+                    r"seuil.*\d+",
+                    r"plafond.*\d+"
+                ]
+            },
+            "guide_exoneration": {
+                "keywords": ["exonération", "dispense", "exemption", "franchise"],
+                "metadata_flags": ["has_exoneration"],
+                "doc_types": ["guide"],
+                "content_patterns": [
+                    r"exonération",
+                    r"dispense.*comptabilité",
+                    r"exemption"
+                ]
+            },
+            "guide_declaration": {
+                "keywords": ["déclaration", "déclaratif", "déclarer"],
+                "metadata_flags": ["has_declaration"],
+                "doc_types": ["guide"],
+                "content_patterns": [
+                    r"déclaration\s+fiscale",
+                    r"déclarer",
+                    r"régime\s+déclaratif"
+                ]
+            },
                 "arrete_epargne": {
                     "keywords": ["épargne", "epargne", "education", "logement", "plan"],
                     "metadata_flags": ["has_epargne"],
@@ -1232,15 +1478,212 @@ Extraits du CGI:
                         r"plafond.*10\s*%",
                         r"représentation.*plafonné"
                     ]
+                },
+                # NOUVEAUX PATTERNS POUR CATÉGORISATION
+                "categorisation_oea": {
+                    "keywords": ["oea", "opérateur économique agréé", "statut oea", "audit", "sécurité", "sûreté"],
+                    "metadata_flags": ["has_oea", "has_audit", "has_commission"],
+                    "doc_types": ["categorisation_commune", "categorisation_dgi"],
+                    "content_patterns": [
+                        r"opérateur\s+économique\s+agréé",
+                        r"statut\s+oea",
+                        r"audit.*sécurité",
+                        r"chaîne\s+logistique",
+                        r"facilités\s+douanières"
+                    ]
+                },
+                "categorisation_eligibilite": {
+                    "keywords": ["éligibilité", "critères", "conditions", "statut", "entreprise éligible"],
+                    "metadata_flags": ["has_eligibilite", "has_dossier"],
+                    "doc_types": ["categorisation_commune", "categorisation_dgi"],
+                    "content_patterns": [
+                        r"critères.*éligibilité",
+                        r"conditions.*statut",
+                        r"entreprise.*éligible",
+                        r"dossier.*constitué"
+                    ]
+                },
+                "categorisation_tva": {
+                    "keywords": ["tva", "taxe sur la valeur ajoutée", "remboursement", "guichet dédié"],
+                    "metadata_flags": ["has_tva", "has_eligibilite"],
+                    "doc_types": ["categorisation_dgi"],
+                    "content_patterns": [
+                        r"taxe\s+sur\s+la\s+valeur\s+ajoutée",
+                        r"remboursement.*tva",
+                        r"guichet.*dédié",
+                        r"interlocuteur.*privilégié"
+                    ]
+                },
+                "categorisation_procedure": {
+                    "keywords": ["procédure", "dossier", "dépôt", "commission", "évaluation"],
+                    "metadata_flags": ["has_dossier", "has_commission", "has_delai"],
+                    "doc_types": ["categorisation_commune", "categorisation_dgi"],
+                    "content_patterns": [
+                        r"dossier.*déposé",
+                        r"commission.*évaluation",
+                        r"\d+\s+(?:jours?|mois)",
+                        r"renouvellement"
+                    ]
+                },
+                # NOUVEAUX PATTERNS POUR DEMANDES D'ÉCLAIRCISSEMENT
+                "demande_exoneration_tva": {
+                    "keywords": ["exonération", "tva", "lait en poudre", "produit alimentaire", "enfants"],
+                    "metadata_flags": ["has_exoneration_tva", "has_produit_alimentaire"],
+                    "doc_types": ["demande_eclaircissement"],
+                    "content_patterns": [
+                        r"exonération.*tva.*lait",
+                        r"produit.*enfants",
+                        r"article\s+91.*cgi",
+                        r"vitamines.*minéraux"
+                    ]
+                },
+                "demande_location_tva": {
+                    "keywords": ["location", "local professionnel", "tva", "non équipé", "droit à déduction"],
+                    "metadata_flags": ["has_location_tva", "has_local_professionnel"],
+                    "doc_types": ["demande_eclaircissement"],
+                    "content_patterns": [
+                        r"location.*local.*professionnel",
+                        r"non\s+équipé",
+                        r"droit.*déduction",
+                        r"article\s+89.*cgi"
+                    ]
+                },
+                "demande_delais_paiement": {
+                    "keywords": ["délais de paiement", "loi 69-21", "assurances", "intermédiaires", "acaps"],
+                    "metadata_flags": ["has_delais_paiement", "has_assurances"],
+                    "doc_types": ["demande_eclaircissement"],
+                    "content_patterns": [
+                        r"loi.*69-21",
+                        r"délais.*paiement",
+                        r"intermédiaires.*assurances",
+                        r"acaps|autorité.*contrôle"
+                    ]
+                },
+                "demande_statut_cfc": {
+                    "keywords": ["statut cfc", "casablanca finance city", "taux libératoire", "20%", "période"],
+                    "metadata_flags": ["has_statut_cfc", "has_taux_liberatoire"],
+                    "doc_types": ["demande_eclaircissement"],
+                    "content_patterns": [
+                        r"casablanca\s+finance\s+city",
+                        r"taux\s+libératoire.*20",
+                        r"période.*5\s+ans|10\s+ans",
+                        r"article\s+73.*cgi"
+                    ]
+                },
+                # NOUVEAUX PATTERNS POUR CIRCULAIRES
+                "circulaire_app": {
+                    "keywords": ["app", "accord préalable", "prix de transfert", "transfer pricing", "entreprises associées"],
+                    "metadata_flags": ["has_app", "has_prix_transfert"],
+                    "doc_types": ["circulaire"],
+                    "document_name": "CIRCULAIRE RELATIVE AUX ACCORDS PREALABLES EN MATIERE DES PRIX DE TRANSFERT (APP)",
+                    "content_patterns": [
+                        r"accord[s]?\s+préalable[s]?",
+                        r"prix\s+de\s+transfert",
+                        r"entreprises\s+associées",
+                        r"méthode\s+de\s+détermination",
+                        r"comparables?",
+                        r"analyse\s+fonctionnelle",
+                        r"actifs\s+incorporels",
+                        r"rencontres\s+préliminaires",
+                        r"instruction.*demande",
+                        r"rapports?\s+de\s+suivi"
+                    ]
+                },
+                # NOUVEAUX PATTERNS POUR FAQ
+                "faq_app": {
+                    "keywords": ["app", "accord préalable", "prix de transfert", "transfer pricing", "entreprises associées"],
+                    "metadata_flags": ["has_app", "has_bilateral", "has_multilateral"],
+                    "doc_types": ["faq"],
+                    "content_patterns": [
+                        r"accord.*préalable.*prix.*transfert",
+                        r"app.*entreprises.*associées",
+                        r"méthode.*détermination.*prix",
+                        r"documentation.*prix.*transfert"
+                    ]
+                },
+                "faq_tva": {
+                    "keywords": ["tva", "taxe valeur ajoutée", "exonération", "déduction", "remboursement"],
+                    "metadata_flags": ["has_tva", "has_exoneration", "has_deduction"],
+                    "doc_types": ["faq"],
+                    "content_patterns": [
+                        r"tva.*exonération",
+                        r"droit.*déduction",
+                        r"remboursement.*tva",
+                        r"taxe.*valeur.*ajoutée"
+                    ]
+                },
+                "faq_is": {
+                    "keywords": ["impôt société", "is", "bénéfice", "résultat fiscal", "amortissement"],
+                    "metadata_flags": ["has_is", "has_benefice", "has_amortissement"],
+                    "doc_types": ["faq"],
+                    "content_patterns": [
+                        r"impôt.*société",
+                        r"bénéfice.*fiscal",
+                        r"amortissement.*déductible",
+                        r"résultat.*imposable"
+                    ]
+                },
+                "faq_ir": {
+                    "keywords": ["impôt revenu", "ir", "salaire", "revenus professionnels", "revenus fonciers"],
+                    "metadata_flags": ["has_ir", "has_salaire", "has_revenus_fonciers"],
+                    "doc_types": ["faq"],
+                    "content_patterns": [
+                        r"impôt.*revenu",
+                        r"revenus.*professionnels",
+                        r"revenus.*fonciers",
+                        r"salaire.*imposable"
+                    ]
+                },
+                "faq_generale": {
+                    "keywords": ["question", "réponse", "faq", "fréquemment posée", "clarification"],
+                    "metadata_flags": ["has_question", "has_reponse"],
+                    "doc_types": ["faq"],
+                    "content_patterns": [
+                        r"question.*fréquemment.*posée",
+                        r"réponse.*officielle",
+                        r"clarification.*dgi",
+                        r"précision.*fiscale"
+                    ]
+                },
+                "circulaire_btp": {
+                    "keywords": ["btp", "bâtiment", "travaux publics", "construction", "secteur du bâtiment"],
+                    "metadata_flags": ["has_btp", "has_construction"],
+                    "doc_types": ["circulaire"],
+                    "document_name": "NOTE CIRCULAIRE RELATIVE AU SECTEUR DU BATIMENT ET DES TRAVAUX PUBLICS (B.T.P)",
+                    "content_patterns": [
+                        r"bâtiment\s+et\s+travaux\s+publics",
+                        r"secteur\s+du\s+b\.?t\.?p",
+                        r"construction",
+                        r"promoteurs?\s+immobiliers?",
+                        r"comptabilité.*btp",
+                        r"facturation.*construction",
+                        r"déclaration.*bâtiment",
+                        r"obligations.*btp"
+                    ]
+                },
+                "circulaire_generale": {
+                    "keywords": ["circulaire", "note circulaire", "instruction", "directive", "commentaire"],
+                    "metadata_flags": ["has_circulaire"],
+                    "doc_types": ["circulaire"],
+                    "content_patterns": [
+                        r"circulaire\s+relative",
+                        r"note\s+circulaire",
+                        r"modalités.*application",
+                        r"précisions.*mise\s+en\s+œuvre",
+                        r"commentaires?.*dispositions"
+                    ]
                 }
             }
             
-            # Détecter le type de recherche enrichi
+            # Détecter le type de recherche enrichi (LOGIQUE AMÉLIORÉE)
             search_type = None
+            max_matches = 0
+            
             for stype, config in enriched_search_patterns.items():
-                if any(kw in query_lower for kw in config["keywords"]):
+                matches = sum(1 for kw in config["keywords"] if kw in query_lower)
+                if matches > max_matches:
+                    max_matches = matches
                     search_type = stype
-                    break
             
             # Recherche avec filtres enrichis si pattern détecté
             if search_type:
@@ -1256,12 +1699,35 @@ Extraits du CGI:
                         FieldCondition(key=flag, match=MatchValue(value=True))
                     )
                 
-                # Filtres par type de document
+                # Filtres par type de document (AMÉLIORÉ POUR CATÉGORISATION)
                 if config["doc_types"]:
                     filter_conditions.append(
                         FieldCondition(key="type", match=MatchAny(any=config["doc_types"]))
                     )
                 
+                # NOUVEAU: Filtre par administration pour catégorisation
+                if search_type.startswith("categorisation_"):
+                    if "commune" in query_lower or "adii" in query_lower:
+                        filter_conditions.append(
+                            FieldCondition(key="administrations", match=MatchText(text="DGI, ADII"))
+                        )
+                    elif "dgi" in query_lower and "adii" not in query_lower:
+                        filter_conditions.append(
+                            FieldCondition(key="administrations", match=MatchText(text="DGI"))
+                        )
+                
+                # NOUVEAU: Filtre par type de demande pour les demandes d'éclaircissement
+                if search_type.startswith("demande_"):
+                    filter_conditions.append(
+                        FieldCondition(key="type", match=MatchValue(value="demande_eclaircissement"))
+                    )
+                
+                # NOUVEAU: Filtre par régime fiscal pour les guides
+                if "regime_fiscal" in config:
+                    filter_conditions.append(
+                        FieldCondition(key="regime_fiscal", match=MatchValue(value=config["regime_fiscal"]))
+                    )
+
                 # Recherche avec filtres combinés
                 if filter_conditions:
                     filter_condition = Filter(should=filter_conditions)  # OR logic pour plus de flexibilité
@@ -1271,15 +1737,16 @@ Extraits du CGI:
                             collection_name=self.collections["annexe"],
                             query_vector=[0.0] * 1024,
                             query_filter=filter_condition,
-                            limit=15
+                            limit=20  # Augmenté pour catégorisation
                         )
                         
-                        # Analyser chaque résultat filtré avec enrichissement
+                        # Analyser chaque résultat filtré avec enrichissement (SCORING AMÉLIORÉ)
                         for result in filtered_results:
                             payload = result.payload
                             content = payload.get("contenu", "").lower()
-                            keywords = payload.get("keywords", [])
-                            concepts = payload.get("concepts_cles", [])
+                            keywords = payload.get("search_keywords", [])
+                            concepts = payload.get("key_concepts", [])
+                            doc_type = payload.get("type", "")
                             
                             score = 0.6  # Score de base pour filtre enrichi
                             
@@ -1291,6 +1758,20 @@ Extraits du CGI:
                             concept_matches = sum(1 for concept in concepts if any(term in concept.lower() for term in config["keywords"]))
                             score += concept_matches * 0.15
                             
+                            # NOUVEAU: Bonus spécial pour documents de catégorisation
+                            if doc_type.startswith("categorisation_"):
+                                score += 0.2
+                                
+                                # Bonus supplémentaire selon le type de catégorisation
+                                if search_type == "categorisation_oea" and payload.get("has_oea"):
+                                    score += 0.3
+                                elif search_type == "categorisation_tva" and payload.get("has_tva"):
+                                    score += 0.3
+                                elif search_type == "categorisation_eligibilite" and payload.get("has_eligibilite"):
+                                    score += 0.3
+                                elif search_type == "categorisation_procedure" and payload.get("has_dossier"):
+                                    score += 0.3
+                            
                             # Vérifier les patterns de contenu
                             for pattern in config["content_patterns"]:
                                 if re.search(pattern, content, re.IGNORECASE):
@@ -1298,6 +1779,10 @@ Extraits du CGI:
                                     self.log_debug(f"   ✅ Pattern enrichi trouvé: {pattern[:30]}...")
                                     break
                             
+                            if "regime_fiscal" in config and payload.get("regime_fiscal") == config["regime_fiscal"]:
+                                score += 0.3
+                                self.log_debug(f"   ✅ Régime fiscal correspondant: {config['regime_fiscal']}")
+
                             # Bonus pour articles liés
                             if article_numbers:
                                 articles_lies = payload.get("articles_lies", [])
@@ -1314,8 +1799,66 @@ Extraits du CGI:
             try:
                 enriched_query = self.synonym_manager.expand_query(query)
                 
-                # Ajouter des termes contextuels selon le type détecté
-                if search_type == "arrete_epargne":
+                # Ajouter des termes contextuels selon le type détecté (NOUVEAUX TERMES)
+                if search_type == "categorisation_oea":
+                    enriched_query += " OEA opérateur économique agréé audit sécurité sûreté chaîne logistique facilités douanières"
+                elif search_type == "categorisation_eligibilite":
+                    enriched_query += " éligibilité critères conditions statut entreprise dossier constitué"
+                elif search_type == "categorisation_tva":
+                    enriched_query += " TVA taxe valeur ajoutée remboursement guichet dédié interlocuteur privilégié"
+                elif search_type == "categorisation_procedure":
+                    enriched_query += " procédure dossier dépôt commission évaluation délai renouvellement"
+                elif search_type == "faq_app":
+                    enriched_query += " FAQ accord préalable prix transfert entreprises associées méthode détermination documentation"
+                elif search_type == "faq_tva":
+                    enriched_query += " FAQ TVA taxe valeur ajoutée exonération déduction remboursement"
+                elif search_type == "faq_is":
+                    enriched_query += " FAQ impôt société IS bénéfice résultat fiscal amortissement déductible"
+                elif search_type == "faq_ir":
+                    enriched_query += " FAQ impôt revenu IR salaire revenus professionnels fonciers"
+                elif search_type == "faq_generale":
+                    enriched_query += " FAQ question réponse fréquemment posée clarification DGI précision fiscale"
+                elif search_type == "decret_fusion_absorption":
+                    enriched_query += " fusion absorption société absorbée absorbante évaluation stock modalités prix revient initial valeur origine convention état détaillé suivi"
+                elif search_type == "decret_benefice_forfaitaire":
+                    enriched_query += " bénéfice forfaitaire professions activités exclues régime architectes avocats médecins experts-comptables pharmaciens notaires vétérinaires"
+                elif search_type == "decret_general":
+                    enriched_query += " décret modalités application exécution ministre économie finances bulletin officiel"
+                elif search_type == "circulaire_app":
+                    enriched_query += " APP accord préalable prix transfert entreprises associées méthode détermination comparables analyse fonctionnelle actifs incorporels rencontres préliminaires instruction demande rapports suivi"
+                elif search_type == "circulaire_btp":
+                    enriched_query += " BTP bâtiment travaux publics construction promoteurs immobiliers comptabilité facturation déclaration obligations secteur"
+                elif search_type == "circulaire_generale":
+                    enriched_query += " circulaire note instruction directive modalités application précisions mise œuvre commentaires dispositions"
+                elif search_type == "faq_app":
+                    enriched_query += " FAQ accord préalable prix transfert APP entreprises associées méthode détermination comparables documentation transfer pricing"
+                elif search_type == "faq_tva":
+                    enriched_query += " FAQ TVA taxe valeur ajoutée exonération déduction remboursement assujetti redevable"
+                elif search_type == "faq_is":
+                    enriched_query += " FAQ impôt société IS bénéfice résultat fiscal amortissement déductible provision"
+                elif search_type == "faq_ir":
+                    enriched_query += " FAQ impôt revenu IR salaire revenus professionnels fonciers barème progressif"
+                elif search_type == "faq_generale":
+                    enriched_query += " FAQ question réponse fréquemment posée clarification précision DGI administration fiscale"
+                elif search_type == "demande_exoneration_tva":
+                    enriched_query += " exonération TVA lait poudre produit alimentaire enfants vitamines minéraux article 91 CGI"
+                elif search_type == "demande_location_tva":
+                    enriched_query += " location local professionnel TVA non équipé droit déduction article 89 CGI"
+                elif search_type == "demande_delais_paiement":
+                    enriched_query += " délais paiement loi 69-21 assurances intermédiaires ACAPS autorité contrôle"
+                elif search_type == "demande_statut_cfc":
+                    enriched_query += " statut CFC Casablanca Finance City taux libératoire 20% période 5 ans 10 ans article 73 CGI"
+                elif search_type == "guide_auto_entrepreneur":
+                    enriched_query += " auto-entrepreneur rnae barid al-maghrib ice trimestriel radiation inscription micro-entreprise"
+                elif search_type == "guide_cpu":
+                    enriched_query += " cpu contribution professionnelle unique forfaitaire coefficient complémentaire assurance maladie"
+                elif search_type == "guide_montants_seuils":
+                    enriched_query += " seuil montant dirhams plafond limite chiffre affaires"
+                elif search_type == "guide_exoneration":
+                    enriched_query += " exonération dispense exemption franchise comptabilité"
+                elif search_type == "guide_declaration":
+                    enriched_query += " déclaration fiscale déclarer régime déclaratif"
+                elif search_type == "arrete_epargne":
                     enriched_query += " plan épargne éducation logement ministre économie finances"
                 elif search_type == "arrete_normalisation":
                     enriched_query += " conseil supérieur normalisation certification accréditation membres désignation"
@@ -1323,6 +1866,12 @@ Extraits du CGI:
                     enriched_query += " industrie plastique matière fabrication activités industrielles"
                 elif search_type == "representation_indemnite":
                     enriched_query += " indemnité représentation plafond 10% salaire base"
+                elif search_type == "note_service_moyens_paiement":
+                    enriched_query += " moyens paiement article 193 CGI chèques barrés virements bancaires 20000 dirhams transactions commerciales"
+                elif search_type == "note_service_logement_social":
+                    enriched_query += " logement social superficie couverte exonération TVA 250000 dirhams parties communes 50-80 m²"
+                elif search_type == "note_service_generale":
+                    enriched_query += " note service précisions clarification modalités application CGI"
                 
                 # Ajouter les articles
                 if article_numbers:
@@ -1335,21 +1884,152 @@ Extraits du CGI:
                 semantic_results = self.qdrant_client.search(
                     collection_name=self.collections["annexe"],
                     query_vector=query_vector,
-                    limit=12
+                    limit=15  # Augmenté
                 )
                 
-                # Ajouter les résultats sémantiques avec bonus enrichi
+                # Ajouter les résultats sémantiques avec bonus enrichi (SCORING AMÉLIORÉ)
                 for result in semantic_results:
                     if result.id not in all_results:
                         payload = result.payload
+                        doc_type = payload.get("type", "")
                         
                         # Bonus enrichi basé sur les métadonnées
                         bonus = 0
-                        keywords = payload.get("keywords", [])
-                        concepts = payload.get("concepts_cles", [])
+                        keywords = payload.get("search_keywords", [])
+                        concepts = payload.get("key_concepts", [])
+                        
+                        # NOUVEAU: Bonus spécial pour documents de catégorisation
+                        if doc_type.startswith("categorisation_"):
+                            bonus += 0.15
+                            
+                            # Bonus thématique pour catégorisation
+                            if search_type == "categorisation_oea" and payload.get("has_oea"):
+                                bonus += 0.25
+                            elif search_type == "categorisation_tva" and payload.get("has_tva"):
+                                bonus += 0.25
+                            elif search_type == "categorisation_eligibilite" and payload.get("has_eligibilite"):
+                                bonus += 0.25
+                            elif search_type == "categorisation_procedure" and payload.get("has_dossier"):
+                                bonus += 0.25
+                        
+                        # NOUVEAU: Bonus spécial pour décrets
+                        if doc_type == "decret":
+                            bonus += 0.25
+                            
+                            # Bonus thématique pour décrets
+                            if search_type == "decret_fusion_absorption" and (payload.get("has_fusion") or payload.get("has_stock")):
+                                bonus += 0.35
+                            elif search_type == "decret_benefice_forfaitaire" and payload.get("has_benefice_forfaitaire"):
+                                bonus += 0.35
+                            elif search_type == "decret_general" and payload.get("has_modalites"):
+                                bonus += 0.3
+                        
+                        # NOUVEAU: Bonus spécial pour circulaires
+                        if doc_type == "circulaire":
+                            bonus += 0.25
+                            
+                            # Bonus thématique pour circulaires
+                            if search_type == "circulaire_app" and payload.get("has_app"):
+                                bonus += 0.35
+                            elif search_type == "circulaire_btp" and payload.get("has_btp"):
+                                bonus += 0.35
+                            elif search_type == "circulaire_generale" and payload.get("has_circulaire"):
+                                bonus += 0.3
+                        
+                        # NOUVEAU: Bonus spécial pour demandes d'éclaircissement
+                        if doc_type == "demande_eclaircissement":
+                            bonus += 0.3
+                            
+                            # Bonus thématique pour demandes d'éclaircissement
+                            if search_type == "demande_exoneration_tva" and payload.get("has_exoneration_tva"):
+                                bonus += 0.4
+                            elif search_type == "demande_location_tva" and payload.get("has_location_tva"):
+                                bonus += 0.4
+                            elif search_type == "demande_delais_paiement" and payload.get("has_delais_paiement"):
+                                bonus += 0.4
+                            elif search_type == "demande_statut_cfc" and payload.get("has_statut_cfc"):
+                                bonus += 0.4
+                        
+                        # NOUVEAU: Bonus spécial pour FAQ
+                        if doc_type == "faq":
+                            bonus += 0.25
+                            
+                            # Bonus thématique pour FAQ
+                            if search_type == "faq_app" and payload.get("has_app"):
+                                bonus += 0.35
+                            elif search_type == "faq_tva" and payload.get("has_tva"):
+                                bonus += 0.35
+                            elif search_type == "faq_is" and payload.get("has_is"):
+                                bonus += 0.35
+                            elif search_type == "faq_ir" and payload.get("has_ir"):
+                                bonus += 0.35
+                            elif search_type == "faq_generale" and payload.get("has_question"):
+                                bonus += 0.3
+                        
+                        # NOUVEAU: Bonus spécial pour notes de service
+                        if doc_type == "note_service":
+                            bonus += 0.25
+                            
+                            # Bonus thématique pour notes de service
+                            if search_type == "note_service_moyens_paiement" and payload.get("has_moyens_paiement"):
+                                bonus += 0.35
+                            elif search_type == "note_service_logement_social" and payload.get("has_logement_social"):
+                                bonus += 0.35
+                            elif search_type == "note_service_generale" and payload.get("has_cgi_articles"):
+                                bonus += 0.3
+                        
+                        # NOUVEAU: Bonus spécial pour FAQ
+                        if doc_type == "faq":
+                            bonus += 0.25
+                            
+                            # Bonus thématique pour FAQ
+                            if search_type == "faq_app" and payload.get("has_app"):
+                                bonus += 0.35
+                            elif search_type == "faq_tva" and payload.get("has_tva"):
+                                bonus += 0.35
+                            elif search_type == "faq_is" and payload.get("has_is"):
+                                bonus += 0.35
+                            elif search_type == "faq_ir" and payload.get("has_ir"):
+                                bonus += 0.35
+                            elif search_type == "faq_generale" and payload.get("has_question"):
+                                bonus += 0.3
                         
                         # Bonus pour correspondance thématique enrichie
-                        if search_type == "arrete_epargne" and payload.get("has_epargne"):
+                        if search_type == "circulaire_app" and payload.get("has_app"):
+                            bonus += 0.35
+                        elif search_type == "circulaire_btp" and payload.get("has_btp"):
+                            bonus += 0.35
+                        elif search_type == "circulaire_generale" and payload.get("has_circulaire"):
+                            bonus += 0.3
+                        elif search_type == "faq_app" and payload.get("has_app"):
+                            bonus += 0.35
+                        elif search_type == "faq_tva" and payload.get("has_tva"):
+                            bonus += 0.35
+                        elif search_type == "faq_is" and payload.get("has_is"):
+                            bonus += 0.35
+                        elif search_type == "faq_ir" and payload.get("has_ir"):
+                            bonus += 0.35
+                        elif search_type == "faq_generale" and payload.get("has_question"):
+                            bonus += 0.3
+                        elif search_type == "demande_exoneration_tva" and payload.get("has_exoneration_tva"):
+                            bonus += 0.35
+                        elif search_type == "demande_location_tva" and payload.get("has_location_tva"):
+                            bonus += 0.35
+                        elif search_type == "demande_delais_paiement" and payload.get("has_delais_paiement"):
+                            bonus += 0.35
+                        elif search_type == "demande_statut_cfc" and payload.get("has_statut_cfc"):
+                            bonus += 0.35
+                        elif search_type == "guide_auto_entrepreneur" and payload.get("has_auto_entrepreneur"):
+                            bonus += 0.3
+                        elif search_type == "guide_cpu" and payload.get("has_cpu"):
+                            bonus += 0.3
+                        elif search_type == "guide_montants_seuils" and (payload.get("has_montant") or payload.get("has_seuil")):
+                            bonus += 0.25
+                        elif search_type == "guide_exoneration" and payload.get("has_exoneration"):
+                            bonus += 0.25
+                        elif search_type == "guide_declaration" and payload.get("has_declaration"):
+                            bonus += 0.25
+                        elif search_type == "arrete_epargne" and payload.get("has_epargne"):
                             bonus += 0.25
                         elif search_type == "arrete_normalisation" and (payload.get("has_normalisation") or payload.get("has_conseil_membres")):
                             bonus += 0.25
@@ -1377,13 +2057,13 @@ Extraits du CGI:
                 sorted_results = sorted(all_results.values(), key=lambda x: x[1], reverse=True)
                 
                 final_results = []
-                for result_data in sorted_results[:5]:  # Top 5 résultats enrichis
-                    result = result_data[0]
-                    score = result_data[1]
-                    method = result_data[2]
-                    
-                    self.log_debug(f"   📄 Résultat enrichi: {result.payload.get('type')} - Score: {score:.3f} - Méthode: {method}")
-                    final_results.append(result)
+            for result_data in sorted_results[:8]:  # Augmenté à 8 pour inclure plus de catégorisation
+                result = result_data[0]
+                score = result_data[1]
+                method = result_data[2]
+                
+                self.log_debug(f"   📄 Résultat enrichi: {result.payload.get('type')} - Score: {score:.3f} - Méthode: {method}")
+                final_results.append(result)
                 
                 self.log_debug(f"📚 {len(final_results)} annexes enrichies trouvées")
                 return final_results
@@ -1431,6 +2111,38 @@ Extraits du CGI:
             if any(kw in text_lower for kw in keywords):
                 concepts.extend(keywords[:3])  # Prendre les 3 premiers mots-clés
         
+        # Concepts spécifiques aux circulaires
+        circulaire_concepts = [
+            "accord préalable", "app", "prix de transfert", "transfer pricing",
+            "entreprises associées", "méthode de détermination", "comparables",
+            "analyse fonctionnelle", "actifs incorporels", "rencontres préliminaires",
+            "instruction", "rapports de suivi", "btp", "bâtiment", "travaux publics",
+            "construction", "secteur du bâtiment", "obligations comptables",
+            "facturation", "déclaration fiscale", "contrôle fiscal", "pénalités",
+            "régularisation", "mise en conformité", "modalités d'application",
+            "procédures", "précisions", "commentaires", "directive", "instruction"
+        ]
+        
+        for concept in circulaire_concepts:
+            if concept in text_lower:
+                concepts.append(concept)
+        
+        # Concepts spécifiques aux demandes d'éclaircissement
+        eclaircissement_concepts = [
+            "demande d'éclaircissement", "clarification", "confirmation",
+            "exonération tva", "lait en poudre", "produit alimentaire",
+            "location professionnelle", "local non équipé", "droit à déduction",
+            "délais de paiement", "loi 69-21", "intermédiaires assurances",
+            "statut cfc", "casablanca finance city", "taux libératoire",
+            "période d'application", "article 91 cgi", "article 89 cgi",
+            "article 73 cgi", "vitamines et minéraux", "fibres",
+            "hangar", "activité production", "acaps", "code des assurances"
+        ]
+        
+        for concept in eclaircissement_concepts:
+            if concept in text_lower:
+                concepts.append(concept)
+        
         # Extraire les montants importants
         amounts = re.findall(r'\d+(?:\s*\d+)*\s*(?:dirhams?|dh|mad)', text_lower)
         concepts.extend(amounts[:3])
@@ -1470,7 +2182,95 @@ Extraits du CGI:
             
             # Construire le nom réel du document
             nom_document = ""
-            if type_doc and numero:
+
+            if type_doc == "note_circulaire":
+                document_title = payload.get("document_title", "")
+                introduction = payload.get("introduction", "")
+                chapitre = payload.get("chapitre", "")
+                nom_chapitre = payload.get("nom_chapitre", "")
+                partie = payload.get("partie", "")
+                nom_partie = payload.get("nom_partie", "")
+                sous_partie = payload.get("sous_partie", "")
+                nom_sous_partie = payload.get("nom_sous_partie", "")
+                
+                nom_document = f"Note circulaire : {document_title}"
+                
+                # Construire la hiérarchie
+                hierarchy_parts = []
+                if chapitre and nom_chapitre:
+                    hierarchy_parts.append(f"Chapitre {chapitre}: {nom_chapitre}")
+                if partie and nom_partie:
+                    hierarchy_parts.append(f"Partie {partie}: {nom_partie}")
+                if sous_partie and nom_sous_partie:
+                    hierarchy_parts.append(f"Sous-partie {sous_partie}: {nom_sous_partie}")
+                
+                annexe_context += f"\n\n--- {nom_document.upper()} ---\n"
+                if hierarchy_parts:
+                    annexe_context += f"Hiérarchie: {' > '.join(hierarchy_parts)}\n"
+                if introduction:
+                    annexe_context += f"Introduction: {introduction}\n"
+                if articles_lies:
+                    annexe_context += f"Articles liés: {', '.join(str(a) for a in articles_lies)}\n"
+                
+                # INCLURE LE CONTENU COMPLET
+                annexe_context += f"Contenu complet:\n{contenu}\n"
+                continue  # Skip the normal processing for note_circulaire
+            
+            elif type_doc == "demande_eclaircissement":
+                document = payload.get("document", "")
+                objet = payload.get("objet", "")
+                reponse = payload.get("reponse", "")
+                
+                nom_document = f"Demande d'éclaircissement : {document}"
+                
+                annexe_context += f"\n\n--- {nom_document.upper()} ---\n"
+                if objet:
+                    annexe_context += f"Objet: {objet}\n"
+                
+                # Inclure la réponse complète de la DGI
+                annexe_context += f"Réponse DGI:\n{reponse}\n"
+
+            elif type_doc == "guide":
+                titre_guide = payload.get("titre_guide", "")
+                objet = payload.get("objet", "")
+                contenu = payload.get("contenu", "")
+                
+                nom_document = f"Guide : {titre_guide}" if titre_guide else "Guide fiscal"
+                if objet:
+                    nom_document += f" - {objet}"
+                
+                annexe_context += f"\n\n--- {nom_document.upper()} ---\n"
+                if objet:
+                    annexe_context += f"Objet: {objet}\n"
+                
+                # INCLURE LE CONTENU COMPLET
+                annexe_context += f"Contenu complet:\n{contenu}\n"
+                continue  # Skip the normal processing for guide
+            elif type_doc == "faq":
+                question = payload.get("question", "")
+                reponse = payload.get("reponse", "")
+                
+                nom_document = f"FAQ : {question[:80]}{'...' if len(question) > 80 else ''}"
+                
+                annexe_context += f"\n\n--- {nom_document.upper()} ---\n"
+                annexe_context += f"Question: {question}\n"
+                annexe_context += f"Réponse: {reponse}\n"
+                continue  # Skip the normal processing for FAQ
+            elif type_doc == "note_service":
+                document_type = payload.get("document", "")
+                objet = payload.get("objet", "")
+                contenu = payload.get("contenu", "")
+                
+                nom_document = f"Note de service : {document_type}"
+                
+                annexe_context += f"\n\n--- {nom_document.upper()} ---\n"
+                if objet:
+                    annexe_context += f"Objet: {objet}\n"
+                
+                # INCLURE LE CONTENU COMPLET
+                annexe_context += f"Contenu complet:\n{contenu}\n"
+                continue  # Skip the normal processing for note_service
+            elif type_doc and numero:
                 nom_document = f"{type_doc} n° {numero}"
             elif type_doc:
                 nom_document = type_doc
@@ -1491,36 +2291,38 @@ Extraits du CGI:
             # INCLURE LE CONTENU COMPLET au lieu des extractions ciblées
             annexe_context += f"Contenu complet:\n{contenu}\n"
         
-        # 2. NOUVEAU PROMPT pour vérifier la pertinence et générer une réponse constructive
-        unified_prompt = f"""Tu es AhmedTax, expert fiscal marocain. Tu dois analyser les documents d'application pour déterminer s'ils apportent des précisions pertinentes à la réponse CGI.
+        # 2. PROMPT optimisé pour inclure les circulaires
+        unified_prompt = f"""Tu es un expert fiscal qui analyse des documents d'application du CGI, y compris les circulaires.
 
 QUESTION DE L'UTILISATEUR: "{query}"
 
-RÉPONSE CGI DÉJÀ FOURNIE:
+RÉPONSE CGI PRINCIPALE:
 {cgi_response}
 
-DOCUMENTS D'APPLICATION À ANALYSER:
+DOCUMENTS D'APPLICATION DISPONIBLES (incluant circulaires):
 {annexe_context}
 
-INSTRUCTIONS IMPORTANTES:
-
-1. **VÉRIFICATION DE PERTINENCE** : Analyse d'abord si les documents d'application apportent des précisions utiles et pertinentes à la question posée et à la réponse CGI.
-
-2. **SI LES DOCUMENTS NE SONT PAS PERTINENTS** (hors sujet, pas de précisions utiles, informations déjà couvertes par le CGI) :
-   - Réponds EXACTEMENT : "Aucune précisions à apporter"
-   - Ne génère aucune autre réponse
-
+TÂCHE:
+1. **ANALYSE** si ces documents (guides, arrêtés, notes de service, circulaires) apportent des précisions pratiques à la réponse CGI
+2. **IGNORE** les documents non pertinents ou redondants
 3. **SI LES DOCUMENTS SONT PERTINENTS** :
-   - EXTRAIT les informations spécifiques qui complètent ou précisent la réponse CGI
+   - EXTRAIT les informations spécifiques qui complètent ou précisent la réponse principale
+   - Pour les CIRCULAIRES : identifie les modalités pratiques, procédures, et précisions d'application
    - GÉNÈRE une réponse constructive qui EXPLIQUE concrètement ce qui change ou se précise
-   - CITE les documents par leur nom réel (ex: "Note circulaire n° 736", "Décret n° 2-17-743") et NON par "document 1", "document 2"
+   - CITE les documents par leur nom réel et type (ex: "Circulaire relative aux APP", "Note circulaire BTP")
    - INTÈGRE les informations trouvées dans une explication fluide et pratique
    - DONNE des réponses définitives basées sur les documents trouvés
+   - RESPECTE la hiérarchie des notes circulaires (chapitre > partie > sous-partie)
+
+EXEMPLES de réponses constructives pour les demandes d'éclaircissement:
+
+Pour une question sur l'exonération TVA:
+"La réponse CGI mentionnait l'exonération du lait en poudre sans préciser les conditions. La demande d'éclaircissement sur l'exonération TVA lait en poudre apporte la précision officielle de la DGI : OUI, votre produit peut bénéficier de l'exonération car selon la réponse DGI, les produits constitués de lait en poudre avec des matières ajoutées ne modifiant pas sa consistance et sa nature peuvent bénéficier de l'exonération de l'article 91-I-A-9° du CGI."
 
 STRUCTURE DE LA RÉPONSE (si pertinente):
-- Identifier ce qui était imprécis dans la réponse CGI
-- Expliquer concrètement ce que les documents d'application apportent comme précisions
-- Citer les documents par leur nom réel
+- Identifier ce qui était imprécis dans la réponse principale
+- Expliquer concrètement ce que les documents d'application (y compris circulaires) apportent comme précisions
+- Citer les documents par leur nom réel et type
 - Donner la réponse finale claire et pratique
 
 EXEMPLES de réponses constructives attendues:
@@ -1533,12 +2335,12 @@ Pour une question sur les plafonds d'indemnités:
 
 TON ET STYLE:
 - Réponse fluide et naturelle, pas de format de citation
-- Explication claire de ce qui change par rapport à la réponse CGI
+- Explication claire de ce qui change par rapport à la réponse principale
 - Réponse définitive et pratique pour l'utilisateur
 - Éviter les formules comme "il faut consulter" - donner directement la réponse
 - Citer les documents par leur nom réel, jamais par "document 1", "document 2"
 
-ANALYSE maintenant si les documents apportent des précisions pertinentes et réponds en conséquence."""
+ANALYSE maintenant si les documents (incluant circulaires) apportent des précisions pertinentes et réponds en conséquence."""
 
         try:
             model = genai.GenerativeModel("gemini-2.0-flash")
@@ -1586,15 +2388,324 @@ ANALYSE maintenant si les documents apportent des précisions pertinentes et ré
             objet = payload.get("objet", "")
             contenu = payload.get("contenu", "")
             articles_lies = payload.get("articles_lies", [])
+            document = payload.get("document", "")
             
-            # Formater l'en-tête selon le type
-            doc_headers = {
-                "note_circulaire": (f"**Note circulaire n° {numero}** ({date})", "📑"),
-                "décret": (f"**Décret n° {numero}** ({date})", "📜"),
-                "note_service": (f"**Note de service** ({date})", "📝"),
-            }
-            
-            doc_header, doc_icon = doc_headers.get(type_doc, (f"**{type_doc.title()}**", "📄"))
+            # TRAITEMENT SPÉCIFIQUE POUR LES GUIDES
+            if type_doc == "guide":
+                titre_guide = payload.get("titre_guide", "")
+                regime_fiscal = payload.get("regime_fiscal", "")
+                
+                # Formater l'en-tête pour les guides
+                if titre_guide:
+                    doc_header = f"**Guide : {titre_guide}**"
+                    if regime_fiscal:
+                        doc_header += f" ({regime_fiscal})"
+                else:
+                    doc_header = f"**Guide fiscal**"
+                
+                doc_icon = "📖"
+                
+                # Ajouter l'objet comme sous-titre
+                if objet:
+                    doc_header += f"\n*Question : {objet}*"
+
+            elif type_doc == "note_circulaire":
+                # Extraire les champs spécifiques aux notes circulaires
+                document_title = payload.get("document_title", "")
+                introduction = payload.get("introduction", "")
+                chapitre = payload.get("chapitre", "")
+                nom_chapitre = payload.get("nom_chapitre", "")
+                partie = payload.get("partie", "")
+                nom_partie = payload.get("nom_partie", "")
+                sous_partie = payload.get("sous_partie", "")
+                nom_sous_partie = payload.get("nom_sous_partie", "")
+                
+                # Construire l'en-tête hiérarchique
+                doc_header = f"**Note circulaire : {document_title}**"
+                doc_icon = "📋"
+                
+                # Ajouter la hiérarchie si disponible
+                hierarchy_parts = []
+                if chapitre and nom_chapitre:
+                    hierarchy_parts.append(f"Chapitre {chapitre}: {nom_chapitre}")
+                if partie and nom_partie:
+                    hierarchy_parts.append(f"Partie {partie}: {nom_partie}")
+                if sous_partie and nom_sous_partie:
+                    hierarchy_parts.append(f"Sous-partie {sous_partie}: {nom_sous_partie}")
+                
+                if hierarchy_parts:
+                    doc_header += f"\n*{' > '.join(hierarchy_parts)}*"
+                
+                # Traitement spécialisé selon le contenu
+                query_lower = query.lower()
+                
+                # 1. RETENUE À LA SOURCE
+                if payload.get("has_retenue_source") and any(term in query_lower for term in ["retenue", "source", "établissement", "crédit"]):
+                    formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                    
+                    # Extraire les informations sur la retenue à la source
+                    retenue_patterns = [
+                        r"taux\s+de\s+retenue.*?(\d+(?:,\d+)?\s*%)",
+                        r"établissements\s+de\s+crédit.*?([^.]+)",
+                        r"revenus\s+de\s+capitaux.*?([^.]+)",
+                        r"dividendes.*?retenue.*?([^.]+)"
+                    ]
+                    
+                    extracted_info = []
+                    for pattern in retenue_patterns:
+                        match = re.search(pattern, contenu, re.IGNORECASE | re.DOTALL)
+                        if match:
+                            info = match.group(1).strip()
+                            if len(info) > 10 and info not in extracted_info:
+                                extracted_info.append(info)
+                    
+                    if extracted_info:
+                        formatted_response += "💰 **Précisions sur la retenue à la source :**\n\n"
+                        for info in extracted_info[:3]:  # Limiter à 3 éléments
+                            formatted_response += f"• {info}\n"
+                        formatted_response += "\n💡 *Cette note circulaire précise les modalités d'application de la retenue à la source*"
+                        return formatted_response
+                
+                # 2. IMPÔT SUR LES SOCIÉTÉS
+                elif payload.get("has_is") and any(term in query_lower for term in ["impôt société", "is", "bénéfice", "amortissement"]):
+                    formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                    
+                    # Extraire les informations sur l'IS
+                    is_patterns = [
+                        r"bénéfice\s+imposable.*?([^.]+)",
+                        r"amortissement.*?déductible.*?([^.]+)",
+                        r"provisions.*?([^.]+)",
+                        r"charges.*?déductibles.*?([^.]+)"
+                    ]
+                    
+                    extracted_info = []
+                    for pattern in is_patterns:
+                        match = re.search(pattern, contenu, re.IGNORECASE | re.DOTALL)
+                        if match:
+                            info = match.group(1).strip()
+                            if len(info) > 10 and info not in extracted_info:
+                                extracted_info.append(info)
+                    
+                    if extracted_info:
+                        formatted_response += "🏢 **Précisions sur l'impôt sur les sociétés :**\n\n"
+                        for info in extracted_info[:3]:
+                            formatted_response += f"• {info}\n"
+                        formatted_response += "\n💡 *Cette note circulaire détaille l'application de l'impôt sur les sociétés*"
+                        return formatted_response
+                
+                # 3. IMPÔT SUR LE REVENU
+                elif payload.get("has_ir") and any(term in query_lower for term in ["impôt revenu", "ir", "salaire", "revenus"]):
+                    formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                    
+                    # Extraire les informations sur l'IR
+                    ir_patterns = [
+                        r"revenus\s+professionnels.*?([^.]+)",
+                        r"revenus\s+fonciers.*?([^.]+)",
+                        r"salaire.*?imposable.*?([^.]+)",
+                        r"barème.*?([^.]+)"
+                    ]
+                    
+                    extracted_info = []
+                    for pattern in ir_patterns:
+                        match = re.search(pattern, contenu, re.IGNORECASE | re.DOTALL)
+                        if match:
+                            info = match.group(1).strip()
+                            if len(info) > 10 and info not in extracted_info:
+                                extracted_info.append(info)
+                    
+                    if extracted_info:
+                        formatted_response += "👤 **Précisions sur l'impôt sur le revenu :**\n\n"
+                        for info in extracted_info[:3]:
+                            formatted_response += f"• {info}\n"
+                        formatted_response += "\n💡 *Cette note circulaire clarifie l'application de l'impôt sur le revenu*"
+                        return formatted_response
+                
+                # 4. TRAITEMENT GÉNÉRAL POUR LES NOTES CIRCULAIRES
+                else:
+                    formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                    
+                    # Extraire l'introduction si disponible
+                    if introduction and len(introduction) > 20:
+                        formatted_response += f"📖 **Introduction :** {introduction[:300]}{'...' if len(introduction) > 300 else ''}\n\n"
+                    
+                    # Extraire des éléments clés du contenu
+                    key_elements = []
+                    
+                    # Chercher des éléments structurés
+                    if "modalités" in contenu.lower():
+                        modalites_match = re.search(r"modalités.*?([^.]{50,200})", contenu, re.IGNORECASE | re.DOTALL)
+                        if modalites_match:
+                            key_elements.append(f"**Modalités :** {modalites_match.group(1).strip()}")
+                    
+                    if "procédure" in contenu.lower():
+                        procedure_match = re.search(r"procédure.*?([^.]{50,200})", contenu, re.IGNORECASE | re.DOTALL)
+                        if procedure_match:
+                            key_elements.append(f"**Procédure :** {procedure_match.group(1).strip()}")
+                    
+                    if "conditions" in contenu.lower():
+                        conditions_match = re.search(r"conditions.*?([^.]{50,200})", contenu, re.IGNORECASE | re.DOTALL)
+                        if conditions_match:
+                            key_elements.append(f"**Conditions :** {conditions_match.group(1).strip()}")
+                    
+                    if key_elements:
+                        formatted_response += "\n".join(key_elements[:2])  # Limiter à 2 éléments
+                        formatted_response += "\n\n💡 *Cette note circulaire apporte des précisions pratiques sur l'application des dispositions fiscales*"
+                        return formatted_response
+                    
+                    # Fallback : extraire un extrait pertinent du contenu
+                    if contenu and len(contenu) > 100:
+                        # Chercher un paragraphe pertinent
+                        sentences = contenu.split('.')
+                        relevant_sentences = []
+                        
+                        for sentence in sentences:
+                            sentence = sentence.strip()
+                            if len(sentence) > 50 and any(term in sentence.lower() for term in query.split()):
+                                relevant_sentences.append(sentence)
+                                if len(relevant_sentences) >= 2:
+                                    break
+                        
+                        if relevant_sentences:
+                            formatted_response += "📝 **Extrait pertinent :**\n\n"
+                            formatted_response += ". ".join(relevant_sentences) + ".\n\n"
+                            formatted_response += "💡 *Cette note circulaire contient des informations détaillées sur le sujet*"
+                            return formatted_response
+
+            # TRAITEMENT SPÉCIFIQUE POUR LES DÉCRETS
+            elif type_doc == "decret":
+                # Identifier le type de décret
+                if payload.get("has_fusion") and payload.get("has_stock"):
+                    doc_header = f"**Décret n° {numero}** ({date}) - Fusion-absorption et évaluation des stocks"
+                    doc_icon = "⚖️"
+                    
+                    # Extraction ciblée pour fusion-absorption
+                    if any(term in query.lower() for term in ["fusion", "absorption", "stock", "évaluation"]):
+                        fusion_patterns = [
+                            r"valeur\s+d'origine.*prix\s+de\s+revient\s+initial.*([^.]+)",
+                            r"état\s+détaillé.*éléments.*([^.]+)",
+                            r"état\s+de\s+suivi.*([^.]+)",
+                            r"convention\s+de\s+fusion.*([^.]+)",
+                            r"prix\s+du\s+marché.*([^.]+)"
+                        ]
+                        
+                        for pattern in fusion_patterns:
+                            match = re.search(pattern, contenu, re.IGNORECASE | re.DOTALL)
+                            if match:
+                                info_extraite = match.group(1).strip()
+                                if len(info_extraite) > 20:
+                                    formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                                    formatted_response += f"📋 **Modalités d'évaluation :** {info_extraite}\n\n"
+                                    formatted_response += "💡 *Ce décret précise les modalités d'évaluation des éléments du stock lors des opérations de fusion-absorption*"
+                                    return formatted_response
+                
+                elif payload.get("has_benefice_forfaitaire") and payload.get("has_professions_exclues"):
+                    doc_header = f"**Décret n° {numero}** ({date}) - Professions exclues du bénéfice forfaitaire"
+                    doc_icon = "👥"
+                    
+                    # Extraction ciblée pour professions exclues
+                    if any(term in query.lower() for term in ["profession", "forfaitaire", "exclu", "activité"]):
+                        # Extraire la liste des professions
+                        professions_match = re.search(r"professions.*exclues.*suivantes\s*:(.*?)(?:Le\s+ministre|$)", contenu, re.IGNORECASE | re.DOTALL)
+                        if professions_match:
+                            professions_text = professions_match.group(1)
+                            
+                            # Parser les professions (limiter à 10 pour l'affichage)
+                            professions = []
+                            for line in professions_text.split(';'):
+                                line = line.strip()
+                                if line and line.startswith('-'):
+                                    profession = line[1:].strip()
+                                    if profession:
+                                        professions.append(profession)
+                            
+                            if professions:
+                                formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                                formatted_response += "📝 **Professions exclues du régime du bénéfice forfaitaire :**\n\n"
+                                
+                                # Afficher les 10 premières professions
+                                for i, profession in enumerate(professions[:10]):
+                                    formatted_response += f"• {profession}\n"
+                                
+                                if len(professions) > 10:
+                                    formatted_response += f"• ... et {len(professions) - 10} autres professions\n"
+                                
+                                formatted_response += "\n💡 *Ces professions sont exclues du régime du bénéfice forfaitaire selon l'article 41 du CGI*"
+                                return formatted_response
+                
+                else:
+                    # Décret général
+                    doc_header = f"**Décret n° {numero}** ({date})"
+                    if objet:
+                        doc_header += f" - {objet}"
+                    doc_icon = "📜"
+            # TRAITEMENT SPÉCIFIQUE POUR LES CIRCULAIRES
+            elif type_doc == "circulaire":
+                # Identifier le type de circulaire
+                if "ACCORDS PREALABLES" in document.upper() or "APP" in document.upper():
+                    doc_header = "**Circulaire relative aux accords préalables en matière des prix de transfert (APP)**"
+                    doc_icon = "📋"
+                    
+                    # Extraction ciblée pour les APP
+                    if any(term in query.lower() for term in ["app", "accord préalable", "prix de transfert"]):
+                        # Chercher des informations spécifiques sur les APP
+                        app_patterns = [
+                            r"demande.*app.*déposée?.*([^.]+)",
+                            r"durée.*accord.*([^.]+)",
+                            r"méthode.*détermination.*([^.]+)",
+                            r"entreprises.*associées.*([^.]+)",
+                            r"rencontres.*préliminaires.*([^.]+)"
+                        ]
+                        
+                        for pattern in app_patterns:
+                            match = re.search(pattern, contenu, re.IGNORECASE | re.DOTALL)
+                            if match:
+                                info_extraite = match.group(1).strip()
+                                if len(info_extraite) > 20:
+                                    formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                                    formatted_response += f"📌 **Information sur les APP :** {info_extraite}\n\n"
+                                    formatted_response += "💡 *Cette circulaire précise les modalités pratiques de conclusion des accords préalables en matière de prix de transfert*"
+                                    return formatted_response
+                
+                elif "BATIMENT" in document.upper() or "B.T.P" in document.upper():
+                    doc_header = "**Note circulaire relative au secteur du bâtiment et des travaux publics (BTP)**"
+                    doc_icon = "🏗️"
+                    
+                    # Extraction ciblée pour le BTP
+                    if any(term in query.lower() for term in ["btp", "bâtiment", "construction", "travaux publics"]):
+                        # Chercher des informations spécifiques sur le BTP
+                        btp_patterns = [
+                            r"obligations.*comptables.*([^.]+)",
+                            r"facturation.*([^.]+)",
+                            r"déclaration.*fiscale.*([^.]+)",
+                            r"contrôle.*([^.]+)",
+                            r"pénalités.*([^.]+)"
+                        ]
+                        
+                        for pattern in btp_patterns:
+                            match = re.search(pattern, contenu, re.IGNORECASE | re.DOTALL)
+                            if match:
+                                info_extraite = match.group(1).strip()
+                                if len(info_extraite) > 20:
+                                    formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                                    formatted_response += f"🔧 **Précision BTP :** {info_extraite}\n\n"
+                                    formatted_response += "💡 *Cette note circulaire détaille les obligations spécifiques au secteur du bâtiment et des travaux publics*"
+                                    return formatted_response
+                
+                else:
+                    # Circulaire générale
+                    doc_header = f"**Circulaire fiscale**"
+                    if document:
+                        doc_header = f"**{document}**"
+                    doc_icon = "📋"
+            else:
+                # Formater l'en-tête selon le type (code existant)
+                doc_headers = {
+                    "note_circulaire": (f"**Note circulaire n° {numero}** ({date})", "📑"),
+                    "décret": (f"**Décret n° {numero}** ({date})", "📜"),
+                    "note_service": (f"**Note de service** ({date})", "📝"),
+                }
+                
+                doc_header, doc_icon = doc_headers.get(type_doc, (f"**{type_doc.title()}**", "📄"))
             
             # Si articles liés, les mentionner
             if articles_lies:
@@ -1716,8 +2827,317 @@ ANALYSE maintenant si les documents apportent des précisions pertinentes et ré
                         formatted_response += "\n*Réservée aux cadres dirigeants disposant de pouvoirs de direction et de gestion*"
                     
                     return formatted_response
+
+            elif any(term in query_lower for term in ["fusion", "absorption", "stock"]) and (type_doc == "decret" or payload.get("has_fusion")):
+                # Traitement spécifique pour les décrets de fusion-absorption
+                if payload.get("has_fusion") and payload.get("has_stock"):
+                    formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                    formatted_response += "⚖️ **Modalités d'évaluation des stocks en cas de fusion-absorption**\n\n"
+                    
+                    # Extraire les points clés
+                    key_points = []
+                    if "prix de revient initial" in contenu.lower():
+                        key_points.append("• Évaluation à la valeur d'origine (prix de revient initial)")
+                    if "état détaillé" in contenu.lower():
+                        key_points.append("• Production d'un état détaillé des éléments évalués")
+                    if "état de suivi" in contenu.lower():
+                        key_points.append("• État de suivi à joindre aux déclarations fiscales")
+                    if "prix du marché" in contenu.lower():
+                        key_points.append("• Possibilité d'évaluation au prix du marché avec note explicative")
+                    
+                    if key_points:
+                        formatted_response += "\n".join(key_points)
+                        formatted_response += "\n\n💡 *Application de l'article 162-III du CGI*"
+                        return formatted_response
             
-            # 3. APPROCHE GÉNÉRALE AMÉLIORÉE pour les autres cas
+            # 4. PROFESSIONS EXCLUES DU BÉNÉFICE FORFAITAIRE
+            elif any(term in query_lower for term in ["profession", "forfaitaire", "exclu"]) and (type_doc == "decret" or payload.get("has_benefice_forfaitaire")):
+                if payload.get("has_professions_exclues"):
+                    formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                    formatted_response += "👥 **Professions exclues du régime du bénéfice forfaitaire**\n\n"
+                    
+                    # Chercher des professions spécifiques mentionnées dans la query
+                    professions_mentionnees = []
+                    professions_cles = [
+                        "architecte", "avocat", "médecin", "pharmacien", "notaire", 
+                        "expert-comptable", "ingénieur", "vétérinaire", "dentiste",
+                        "hôtelier", "promoteur", "agent d'affaires"
+                    ]
+                    
+                    for profession in professions_cles:
+                        if profession in query_lower and profession in contenu.lower():
+                            professions_mentionnees.append(profession.title())
+                    
+                    if professions_mentionnees:
+                        formatted_response += f"✅ **Professions confirmées comme exclues :** {', '.join(professions_mentionnees)}\n\n"
+                    
+                    formatted_response += "💡 *Ces professions sont exclues du régime du bénéfice forfaitaire selon l'article 41 du CGI*"
+                    return formatted_response
+            
+            # 3. TRAITEMENT SPÉCIFIQUE POUR LES FAQ
+            elif type_doc == "faq":
+                question = payload.get("question", "")
+                reponse = payload.get("reponse", "")
+                
+                # Identifier le type de FAQ
+                if payload.get("has_app") or "app" in question.lower():
+                    doc_header = "**FAQ - Accords Préalables en matière de Prix de Transfert (APP)**"
+                    doc_icon = "❓"
+                    
+                    # Extraction ciblée pour les FAQ APP
+                    if any(term in query.lower() for term in ["app", "accord préalable", "prix de transfert"]):
+                        formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                        formatted_response += f"**Q:** {question}\n\n"
+                        formatted_response += f"**R:** {reponse[:500]}{'...' if len(reponse) > 500 else ''}\n\n"
+                        formatted_response += "💡 *Cette FAQ apporte des clarifications officielles sur les accords préalables en matière de prix de transfert*"
+                        return formatted_response
+                
+                elif payload.get("has_tva") or "tva" in question.lower():
+                    doc_header = "**FAQ - Taxe sur la Valeur Ajoutée (TVA)**"
+                    doc_icon = "❓"
+                    
+                    # Extraction ciblée pour les FAQ TVA
+                    if any(term in query.lower() for term in ["tva", "taxe", "exonération", "déduction"]):
+                        formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                        formatted_response += f"**Q:** {question}\n\n"
+                        formatted_response += f"**R:** {reponse[:500]}{'...' if len(reponse) > 500 else ''}\n\n"
+                        formatted_response += "💡 *Cette FAQ clarifie l'application des règles TVA*"
+                        return formatted_response
+                
+                elif payload.get("has_is") or "impôt société" in question.lower():
+                    doc_header = "**FAQ - Impôt sur les Sociétés (IS)**"
+                    doc_icon = "❓"
+                    
+                    # Extraction ciblée pour les FAQ IS
+                    if any(term in query.lower() for term in ["impôt société", "is", "bénéfice", "amortissement"]):
+                        formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                        formatted_response += f"**Q:** {question}\n\n"
+                        formatted_response += f"**R:** {reponse[:500]}{'...' if len(reponse) > 500 else ''}\n\n"
+                        formatted_response += "💡 *Cette FAQ précise l'application de l'impôt sur les sociétés*"
+                        return formatted_response
+                
+                elif payload.get("has_ir") or "impôt revenu" in question.lower():
+                    doc_header = "**FAQ - Impôt sur le Revenu (IR)**"
+                    doc_icon = "❓"
+                    
+                    # Extraction ciblée pour les FAQ IR
+                    if any(term in query.lower() for term in ["impôt revenu", "ir", "salaire", "revenus"]):
+                        formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                        formatted_response += f"**Q:** {question}\n\n"
+                        formatted_response += f"**R:** {reponse[:500]}{'...' if len(reponse) > 500 else ''}\n\n"
+                        formatted_response += "💡 *Cette FAQ clarifie l'application de l'impôt sur le revenu*"
+                        return formatted_response
+                
+                else:
+                    # FAQ générale
+                    doc_header = "**FAQ - Question Fiscale**"
+                    doc_icon = "❓"
+                    
+                    formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                    formatted_response += f"**Q:** {question}\n\n"
+                    formatted_response += f"**R:** {reponse[:400]}{'...' if len(reponse) > 400 else ''}\n\n"
+                    formatted_response += "💡 *Cette FAQ apporte des précisions sur une question fiscale fréquemment posée*"
+                    return formatted_response
+            
+            # 4. TRAITEMENT SPÉCIFIQUE POUR LES NOTES DE SERVICE
+            elif type_doc == "note_service":
+                # Extraire les champs spécifiques aux notes de service
+                document_type = payload.get("document", "")
+                objet = payload.get("objet", "")
+                
+                # Construire l'en-tête
+                doc_header = f"**Note de service : {document_type}**"
+                doc_icon = "📝"
+                
+                # Ajouter l'objet comme sous-titre
+                if objet:
+                    doc_header += f"\n*Objet : {objet}*"
+                
+                # Traitement spécialisé selon le contenu
+                query_lower = query.lower()
+                
+                # 1. MOYENS DE PAIEMENT
+                if payload.get("has_moyens_paiement") and any(term in query_lower for term in ["paiement", "chèque", "virement", "193"]):
+                    formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                    
+                    # Extraire les informations sur les moyens de paiement
+                    paiement_patterns = [
+                        r"20\s*000\s*dirhams?.*?([^.]{50,200})",
+                        r"chèques?\s+barrés?.*?([^.]{50,200})",
+                        r"virements?\s+bancaires?.*?([^.]{50,200})",
+                        r"article\s+193.*?([^.]{50,200})"
+                    ]
+                    
+                    extracted_info = []
+                    for pattern in paiement_patterns:
+                        match = re.search(pattern, contenu, re.IGNORECASE | re.DOTALL)
+                        if match:
+                            info = match.group(1).strip()
+                            if len(info) > 10 and info not in extracted_info:
+                                extracted_info.append(info)
+                    
+                    if extracted_info:
+                        formatted_response += "💳 **Précisions sur les moyens de paiement :**\n\n"
+                        for info in extracted_info[:3]:
+                            formatted_response += f"• {info}\n"
+                        formatted_response += "\n💡 *Cette note de service précise les modalités d'application de l'article 193 du CGI*"
+                        return formatted_response
+                
+                # 2. LOGEMENT SOCIAL
+                elif payload.get("has_logement_social") and any(term in query_lower for term in ["logement", "social", "superficie", "tva"]):
+                    formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                    
+                    # Extraire les informations sur le logement social
+                    logement_patterns = [
+                        r"superficie\s+couverte.*?([^.]{50,200})",
+                        r"50[-–]80\s*m².*?([^.]{50,200})",
+                        r"250\s*000\s*dirhams?.*?([^.]{50,200})",
+                        r"parties?\s+communes?.*?([^.]{50,200})"
+                    ]
+                    
+                    extracted_info = []
+                    for pattern in logement_patterns:
+                        match = re.search(pattern, contenu, re.IGNORECASE | re.DOTALL)
+                        if match:
+                            info = match.group(1).strip()
+                            if len(info) > 10 and info not in extracted_info:
+                                extracted_info.append(info)
+                    
+                    if extracted_info:
+                        formatted_response += "🏠 **Précisions sur le logement social :**\n\n"
+                        for info in extracted_info[:3]:
+                            formatted_response += f"• {info}\n"
+                        formatted_response += "\n💡 *Cette note de service détaille les critères d'exonération TVA pour le logement social*"
+                        return formatted_response
+                
+                # 3. TRAITEMENT GÉNÉRAL POUR LES NOTES DE SERVICE
+                else:
+                    formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                    
+                    # Extraire des éléments clés du contenu
+                    key_elements = []
+                    
+                    # Chercher des éléments structurés
+                    if "précision" in contenu.lower():
+                        precision_match = re.search(r"précisions?.*?([^.]{50,200})", contenu, re.IGNORECASE | re.DOTALL)
+                        if precision_match:
+                            key_elements.append(f"**Précision :** {precision_match.group(1).strip()}")
+                    
+                    if "modalités" in contenu.lower():
+                        modalites_match = re.search(r"modalités.*?([^.]{50,200})", contenu, re.IGNORECASE | re.DOTALL)
+                        if modalites_match:
+                            key_elements.append(f"**Modalités :** {modalites_match.group(1).strip()}")
+                    
+                    # Extraire les articles CGI mentionnés
+                    articles_cgi = payload.get("key_concepts", [])
+                    articles_mentions = [concept for concept in articles_cgi if "article" in concept.lower()]
+                    if articles_mentions:
+                        key_elements.append(f"**Articles concernés :** {', '.join(articles_mentions[:3])}")
+                    
+                    if key_elements:
+                        formatted_response += "\n".join(key_elements[:2])
+                        formatted_response += "\n\n💡 *Cette note de service apporte des précisions pratiques sur l'application des dispositions fiscales*"
+                        return formatted_response
+                    
+                    # Fallback : extraire un extrait pertinent du contenu
+                    if contenu and len(contenu) > 100:
+                        sentences = contenu.split('.')
+                        relevant_sentences = []
+                        
+                        for sentence in sentences:
+                            sentence = sentence.strip()
+                            if len(sentence) > 50 and any(term in sentence.lower() for term in query.split()):
+                                relevant_sentences.append(sentence)
+                                if len(relevant_sentences) >= 2:
+                                    break
+                        
+                        if relevant_sentences:
+                            formatted_response += "📝 **Extrait pertinent :**\n\n"
+                            formatted_response += ". ".join(relevant_sentences) + ".\n\n"
+                            formatted_response += "💡 *Cette note de service contient des informations détaillées sur le sujet*"
+                            return formatted_response
+            
+            # 5. TRAITEMENT SPÉCIFIQUE POUR LES DEMANDES D'ÉCLAIRCISSEMENT
+            elif type_doc == "demande_eclaircissement":
+                document = payload.get("document", "")
+                objet = payload.get("objet", "")
+                reponse = payload.get("reponse", "")
+                
+                doc_header = f"**Demande d'éclaircissement : {document}**"
+                doc_icon = "📝"
+                
+                # Ajouter l'objet comme sous-titre
+                if objet:
+                    doc_header += f"\n*Objet : {objet}*"
+                
+                # Extraction ciblée selon le type de demande
+                if "exonération" in document.lower() and "tva" in document.lower():
+                    # Chercher des informations spécifiques sur l'exonération TVA
+                    exo_patterns = [
+                        r"exonération.*article\s+91.*cgi.*([^.]+)",
+                        r"produits.*constitués.*lait.*poudre.*([^.]+)",
+                        r"matières.*ajoutées.*([^.]+)",
+                        r"consistance.*nature.*([^.]+)"
+                    ]
+                    
+                    for pattern in exo_patterns:
+                        match = re.search(pattern, reponse, re.IGNORECASE | re.DOTALL)
+                        if match:
+                            info_extraite = match.group(1).strip()
+                            if len(info_extraite) > 20:
+                                formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                                formatted_response += f"📌 **Réponse officielle DGI :** {info_extraite}\n\n"
+                                formatted_response += "💡 *Cette demande d'éclaircissement précise les conditions d'application de l'exonération TVA*"
+                                return formatted_response
+                
+                elif "location" in document.lower() and "professionnel" in document.lower():
+                    # Chercher des informations spécifiques sur la location professionnelle
+                    location_patterns = [
+                        r"locations.*locaux.*professionnel.*non\s+équipés.*([^.]+)",
+                        r"droit.*déduction.*([^.]+)",
+                        r"article\s+89.*cgi.*([^.]+)",
+                        r"loi.*finances.*2024.*([^.]+)"
+                    ]
+                    
+                    for pattern in location_patterns:
+                        match = re.search(pattern, reponse, re.IGNORECASE | re.DOTALL)
+                        if match:
+                            info_extraite = match.group(1).strip()
+                            if len(info_extraite) > 20:
+                                formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                                formatted_response += f"📌 **Réponse officielle DGI :** {info_extraite}\n\n"
+                                formatted_response += "💡 *Cette demande d'éclaircissement clarifie le régime TVA des locations professionnelles*"
+                                return formatted_response
+                
+                elif "cfc" in document.lower() or "casablanca finance city" in document.lower():
+                    # Chercher des informations spécifiques sur le statut CFC
+                    cfc_patterns = [
+                        r"taux\s+libératoire.*20.*([^.]+)",
+                        r"période.*5\s+ans.*10\s+ans.*([^.]+)",
+                        r"date.*prise.*fonctions.*([^.]+)",
+                        r"premier.*contrat.*travail.*([^.]+)"
+                    ]
+                    
+                    for pattern in cfc_patterns:
+                        match = re.search(pattern, reponse, re.IGNORECASE | re.DOTALL)
+                        if match:
+                            info_extraite = match.group(1).strip()
+                            if len(info_extraite) > 20:
+                                formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                                formatted_response += f"📌 **Réponse officielle DGI :** {info_extraite}\n\n"
+                                formatted_response += "💡 *Cette demande d'éclaircissement précise l'application du régime CFC*"
+                                return formatted_response
+                
+                # Extraction générale si aucun pattern spécifique ne correspond
+                if reponse:
+                    # Extraire les premiers 300 caractères de la réponse
+                    extrait_reponse = reponse[:300] + "..." if len(reponse) > 300 else reponse
+                    formatted_response = f"\n{doc_icon} {doc_header}:\n"
+                    formatted_response += f"📌 **Réponse officielle DGI :** {extrait_reponse}\n\n"
+                    formatted_response += "💡 *Cette demande d'éclaircissement apporte des précisions officielles de la DGI*"
+                    return formatted_response
+            
+            # 6. APPROCHE GÉNÉRALE AMÉLIORÉE pour les autres cas
             # Pour les autres cas, utiliser une approche plus concise
             extraction_prompt = f"""Analyse ce document fiscal et extrais UNIQUEMENT l'information essentielle qui complète la réponse CGI.
 
