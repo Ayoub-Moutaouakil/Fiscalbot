@@ -2366,18 +2366,140 @@ ANALYSE maintenant si les documents (incluant circulaires) apportent des précis
             return ""
 
 
+    def generate_unified_response_with_agent(self, query, cgi_response, annexe_results):
+        """Agent LLM qui génère une réponse unifiée en combinant CGI et annexes"""
+        
+        # Construire le contexte des annexes
+        annexe_context = ""
+        if annexe_results:
+            for i, result in enumerate(annexe_results[:5]):
+                payload = result.payload
+                type_doc = payload.get("type", "Document")
+                numero = payload.get("numero", "")
+                date = payload.get("date", "")
+                objet = payload.get("objet", "")
+                contenu = payload.get("contenu", "")
+                articles_lies = payload.get("articles_lies", [])
+                
+                # Construire le nom du document
+                if type_doc == "note_circulaire":
+                    document_title = payload.get("document_title", "")
+                    nom_document = f"Note circulaire : {document_title}"
+                elif type_doc == "demande_eclaircissement":
+                    document = payload.get("document", "")
+                    nom_document = f"Demande d'éclaircissement : {document}"
+                elif type_doc == "guide":
+                    titre_guide = payload.get("titre_guide", "")
+                    nom_document = f"Guide : {titre_guide}" if titre_guide else "Guide fiscal"
+                elif type_doc == "faq":
+                    question = payload.get("question", "")
+                    nom_document = f"FAQ : {question[:80]}{'...' if len(question) > 80 else ''}"
+                elif type_doc == "note_service":
+                    document_type = payload.get("document", "")
+                    nom_document = f"Note de service : {document_type}"
+                elif type_doc and numero:
+                    nom_document = f"{type_doc} n° {numero}"
+                else:
+                    nom_document = f"{type_doc}" if type_doc else "Document"
+                
+                annexe_context += f"\n\n--- {nom_document.upper()} ---\n"
+                if date:
+                    annexe_context += f"Date: {date}\n"
+                if objet:
+                    annexe_context += f"Objet: {objet}\n"
+                if articles_lies:
+                    annexe_context += f"Articles liés: {', '.join(str(a) for a in articles_lies)}\n"
+                
+                # Inclure le contenu complet
+                annexe_context += f"Contenu complet:\n{contenu}\n"
+        
+        # Prompt pour l'Agent LLM unifié
+        unified_agent_prompt = f"""Tu es un expert fiscal spécialisé dans le Code Général des Impôts marocain. Tu dois fournir une réponse unique et cohérente qui combine intelligemment les informations du CGI et des textes d'application.
+
+QUESTION DE L'UTILISATEUR: "{query}"
+
+RÉPONSE CGI DISPONIBLE:
+{cgi_response}
+
+TEXTES D'APPLICATION DISPONIBLES:
+{annexe_context if annexe_context else "Aucun texte d'application pertinent trouvé."}
+
+TÂCHE - GÉNÉRER UNE RÉPONSE UNIFIÉE:
+
+1. **ANALYSE GLOBALE** :
+   - Évalue la qualité et la complétude de la réponse CGI
+   - Identifie si les textes d'application apportent des précisions, exemples ou modalités pratiques
+   - Détermine la meilleure approche pour répondre à l'utilisateur
+
+2. **STRATÉGIES DE RÉPONSE** :
+   
+   **Si la réponse CGI est complète et les annexes redondantes** :
+   - Utilise principalement la réponse CGI
+   - Mentionne brièvement les textes d'application s'ils confirment
+   
+   **Si la réponse CGI est vague mais les annexes sont précises** :
+   - Commence par contextualiser avec le CGI
+   - Développe avec les précisions des textes d'application
+   - Cite les documents spécifiques qui apportent la réponse
+   
+   **Si la réponse CGI est incomplète et les annexes complètent** :
+   - Intègre harmonieusement CGI et annexes
+   - Explique comment les textes d'application précisent le CGI
+   
+   **Si ni CGI ni annexes ne répondent précisément** :
+   - Explique ce qui est disponible dans la législation
+   - Oriente vers les démarches appropriées
+
+3. **RÈGLES DE RÉDACTION** :
+   - Une seule réponse fluide et cohérente
+   - Évite les séparations artificielles ("Réponse CGI:", "Réponse Annexes:")
+   - Cite les documents par leur nom réel (ex: "selon la circulaire relative aux APP")
+   - Donne des réponses définitives quand possible
+   - Utilise un ton professionnel mais accessible
+   - Structure logiquement : contexte → règle → application pratique
+
+4. **EXEMPLES DE RÉPONSES UNIFIÉES** :
+
+   **Exemple 1 - CGI vague, annexes précises** :
+   "Votre question porte sur l'exonération des activités industrielles. L'article 6-I-A-1° du CGI prévoit effectivement une exonération pour les entreprises industrielles, mais renvoie à un décret pour la liste des activités concernées. Le décret n° 2-17-743 du 19 juin 2018 permet de vous répondre précisément : OUI, votre société de fabrication de chaussures peut bénéficier de cette exonération car l'industrie de la chaussure figure explicitement dans la liste des activités industrielles exonérées."
+
+   **Exemple 2 - CGI et annexes complémentaires** :
+   "Concernant la déduction des frais de véhicules, l'article 10-I-F du CGI fixe le principe de déductibilité avec certaines limitations. La note de service DGI n° 456 précise les modalités pratiques : pour les véhicules de tourisme, la déduction est plafonnée à 300 000 DH TTC pour le prix d'acquisition, et les frais d'entretien sont déductibles dans la limite de 20 000 DH par an et par véhicule."
+
+GÉNÈRE maintenant une réponse unifiée qui suit ces principes :"""
+
+        try:
+            model = genai.GenerativeModel("gemini-2.0-flash")
+            response = model.generate_content(
+                unified_agent_prompt,
+                generation_config={
+                    "temperature": 0.2,
+                    "max_output_tokens": 1500,
+                }
+            )
+            
+            unified_response = response.text.strip()
+            
+            if unified_response:
+                return unified_response
+            else:
+                # Fallback vers la réponse CGI si l'agent échoue
+                return cgi_response
+                
+        except Exception as e:
+            self.log_debug(f"❌ Erreur Agent LLM unifié: {str(e)}")
+            # Fallback vers la réponse CGI en cas d'erreur
+            return cgi_response
+
     def add_annexe_to_response_excellence(self, cgi_response, annexe_results, query):
-            """Ajoute les informations d'annexe en utilisant le traitement unifié"""
+            """Ajoute les informations d'annexe en utilisant l'agent LLM unifié"""
             if not annexe_results:
                 return cgi_response
             
-            # Utiliser le nouveau traitement unifié avec TOUS les résultats (jusqu'à 5)
-            annexe_info = self.process_annexes_unified(query, cgi_response, annexe_results)
+            # Utiliser l'agent LLM unifié pour combiner CGI et annexes
+            unified_response = self.generate_unified_response_with_agent(query, cgi_response, annexe_results)
             
-            if annexe_info:
-                return cgi_response + annexe_info
-            else:
-                return cgi_response
+            return unified_response
         
     def _extract_annexe_info_excellence(self, query, cgi_response, payload):
         """Extraction d'excellence des informations pertinentes de l'annexe"""
@@ -3230,14 +3352,13 @@ Réponds "NON_PERTINENT" si aucune info utile."""
         
         # RECHERCHE ANNEXE AMÉLIORÉE - TOUJOURS EFFECTUÉE
         annexe_results = []
-        # Supprimer la condition de longueur pour toujours effectuer la recherche annexe
         annexe_results = self.search_annexe_excellence(
             all_article_numbers, original_query, cgi_response
         )
         
-        # Réponse finale
-        final_response = self.add_annexe_to_response_excellence(
-            cgi_response, annexe_results, original_query
+        # NOUVELLE APPROCHE : Réponse unifiée via Agent LLM
+        final_response = self.generate_unified_response_with_agent(
+            original_query, cgi_response, annexe_results
         )
         
         # Mise à jour du contexte
@@ -3262,7 +3383,7 @@ Réponds "NON_PERTINENT" si aucune info utile."""
                 question=query,
                 response=final_response,
                 articles=articles_info,
-                search_method="excellence_hybrid",
+                search_method="excellence_unified",
                 semantic_score=cgi_results[0].score if cgi_results else 0.0,
                 query_complexity=0.5,  # Estimation simple
                 execution_time=execution_time,
@@ -3279,7 +3400,7 @@ Réponds "NON_PERTINENT" si aucune info utile."""
             "debug_logs": self.get_debug_logs(),
             "context_used": use_context,
             "intent": intent,
-            "search_method": "excellence_hybrid",
+            "search_method": "excellence_unified",
             "collections_searched": ["main", "parent", "sections", "annexe"],
             "enrichment_used": True,
             "conversation_id": conversation_id
