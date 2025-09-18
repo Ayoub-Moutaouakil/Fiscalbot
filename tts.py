@@ -12,6 +12,8 @@ import psycopg2
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import requests
+import uuid
 
 # Configuration de la page
 st.set_page_config(
@@ -191,6 +193,78 @@ def get_database():
     return db
 
 db = get_database()
+
+# ===== FONCTIONS API CGI =====
+def create_conversation_api(user_id: str, message: str) -> Optional[str]:
+    """Crée une nouvelle conversation via l'API et retourne l'ID de conversation"""
+    try:
+        url = "https://jgy34kkq252leozh6dd2mvshnm0wmljx.lambda-url.eu-west-3.on.aws/api/v1/cgi/conversation"
+        payload = {
+            "user_id": user_id,
+            "message": message
+        }
+        
+        response = requests.post(url, json=payload, timeout=30)
+        response.raise_for_status()
+        
+        data = response.json()
+        return data.get("id")
+    except Exception as e:
+        st.error(f"Erreur lors de la création de la conversation: {str(e)}")
+        return None
+
+def send_message_to_conversation(conversation_id: str, content: str) -> Optional[str]:
+    """Envoie un message à une conversation existante et retourne la réponse"""
+    try:
+        url = f"https://jgy34kkq252leozh6dd2mvshnm0wmljx.lambda-url.eu-west-3.on.aws/api/v1/cgi/conversation/{conversation_id}"
+        payload = {
+            "content": content
+        }
+        
+        response = requests.post(url, json=payload, timeout=60)
+        response.raise_for_status()
+        
+        data = response.json()
+        return data.get("response")
+    except Exception as e:
+        st.error(f"Erreur lors de l'envoi du message: {str(e)}")
+        return None
+
+# ===== FONCTIONS API FCT =====
+def create_conversation_fct(user_id: str, message: str) -> Optional[str]:
+    """Crée une nouvelle conversation FCT via l'API et retourne l'ID de conversation"""
+    try:
+        url = "https://jgy34kkq252leozh6dd2mvshnm0wmljx.lambda-url.eu-west-3.on.aws/api/v1/fct/conversation"
+        payload = {
+            "user_id": user_id,
+            "message": message
+        }
+        
+        response = requests.post(url, json=payload, timeout=30)
+        response.raise_for_status()
+        
+        data = response.json()
+        return data.get("id")
+    except Exception as e:
+        st.error(f"Erreur lors de la création de la conversation FCT: {str(e)}")
+        return None
+
+def send_message_to_conversation_fct(conversation_id: str, content: str) -> Optional[str]:
+    """Envoie un message à une conversation FCT existante et retourne la réponse"""
+    try:
+        url = f"https://jgy34kkq252leozh6dd2mvshnm0wmljx.lambda-url.eu-west-3.on.aws/api/v1/fct/conversation/{conversation_id}"
+        payload = {
+            "content": content
+        }
+        
+        response = requests.post(url, json=payload, timeout=60)
+        response.raise_for_status()
+        
+        data = response.json()
+        return data.get("response")
+    except Exception as e:
+        st.error(f"Erreur lors de l'envoi du message FCT: {str(e)}")
+        return None
 
 # 🌟 Système de synonymes fiscaux intégré
 class FiscalSynonymManager:
@@ -3300,11 +3374,11 @@ Réponds "NON_PERTINENT" si aucune info utile."""
     
     # MÉTHODE PRINCIPALE D'EXCELLENCE
     def process_query_excellence(self, query, messages_history=None):
-        """Traite une requête avec excellence maximale"""
+        """Traite une requête avec excellence maximale via API"""
         start_time = datetime.now()
         self.clear_debug_logs()
         
-        self.log_debug(f"🚀 TRAITEMENT EXCELLENCE: '{query}'")
+        self.log_debug(f"🚀 TRAITEMENT EXCELLENCE VIA API: '{query}'")
         
         # Détection d'intention
         intent = self.detect_conversation_intent(query)
@@ -3327,86 +3401,84 @@ Réponds "NON_PERTINENT" si aucune info utile."""
                 "search_method": "conversational"
             }
         
-        # Traitement des questions fiscales
-        original_query = query
-        use_context = False
+        # Traitement des questions fiscales via API
+        # Générer un user_id unique pour cette session
+        if "user_id" not in st.session_state:
+            st.session_state.user_id = str(uuid.uuid4())
         
-        # Vérification du contexte
-        if (self.conversation_context["waiting_for_clarification"] and 
-            intent == "clarification"):
-            use_context = True
-            self.log_debug("🔗 Utilisation du contexte de conversation")
+        user_id = st.session_state.user_id
         
-        # RECHERCHE CGI EXCELLENCE
-        cgi_results = self.search_cgi_articles(query, limit=8)
+        # Vérifier si on a déjà une conversation en cours pour cet utilisateur
+        conversation_id = None
+        if "current_conversation_id" in st.session_state:
+            conversation_id = st.session_state.current_conversation_id
         
-        # Génération de la réponse CGI
-        cgi_response = self.generate_cgi_response_excellence(query, cgi_results, use_context=use_context)
+        # Si pas de conversation, en créer une nouvelle
+        if not conversation_id:
+            self.log_debug("🆕 Création d'une nouvelle conversation")
+            conversation_id = create_conversation_api(user_id, query)
+            if conversation_id:
+                st.session_state.current_conversation_id = conversation_id
+                self.log_debug(f"✅ Conversation créée: {conversation_id}")
+            else:
+                # Fallback en cas d'erreur API
+                return {
+                    "response": "❌ Désolé, je rencontre actuellement des difficultés techniques. Veuillez réessayer dans quelques instants.",
+                    "cgi_articles": 0,
+                    "annexe_docs": 0,
+                    "articles_found": [],
+                    "execution_time": (datetime.now() - start_time).total_seconds(),
+                    "debug_logs": self.get_debug_logs(),
+                    "context_used": False,
+                    "intent": intent,
+                    "search_method": "api_error"
+                }
         
-        # Extraction des articles
-        cgi_article_numbers = self.extract_article_numbers(cgi_results)
-        query_article_numbers = self._extract_articles_from_query(original_query)
+        # Envoyer le message à la conversation
+        self.log_debug(f"📤 Envoi du message à la conversation {conversation_id}")
+        api_response = send_message_to_conversation(conversation_id, query)
         
-        # Combiner tous les articles trouvés
-        all_article_numbers = list(set(query_article_numbers + cgi_article_numbers))[:6]
+        if not api_response:
+            # En cas d'erreur, créer une nouvelle conversation
+            self.log_debug("🔄 Erreur API, création d'une nouvelle conversation")
+            conversation_id = create_conversation_api(user_id, query)
+            if conversation_id:
+                st.session_state.current_conversation_id = conversation_id
+                api_response = send_message_to_conversation(conversation_id, query)
         
-        # RECHERCHE ANNEXE AMÉLIORÉE - TOUJOURS EFFECTUÉE
-        annexe_results = []
-        annexe_results = self.search_annexe_excellence(
-            all_article_numbers, original_query, cgi_response
-        )
-        
-        # NOUVELLE APPROCHE : Réponse unifiée via Agent LLM
-        final_response = self.generate_unified_response_with_agent(
-            original_query, cgi_response, annexe_results
-        )
-        
-        # Mise à jour du contexte
-        self._update_context(original_query, final_response, all_article_numbers)
+        if not api_response:
+            # Fallback final
+            return {
+                "response": "❌ Désolé, je rencontre actuellement des difficultés techniques. Veuillez réessayer dans quelques instants.",
+                "cgi_articles": 0,
+                "annexe_docs": 0,
+                "articles_found": [],
+                "execution_time": (datetime.now() - start_time).total_seconds(),
+                "debug_logs": self.get_debug_logs(),
+                "context_used": False,
+                "intent": intent,
+                "search_method": "api_error"
+            }
         
         execution_time = (datetime.now() - start_time).total_seconds()
+        self.log_debug(f"✅ Réponse reçue de l'API en {execution_time:.2f}s")
         
-        # Préparer les articles pour la base de données
-        articles_info = []
-        for result in cgi_results:
-            article_info = {
-                "article": result.payload.get("article", "N/A"),
-                "nom_article": result.payload.get("nom_article", "Sans titre"),
-                "tags": result.payload.get("tags", [])
-            }
-            articles_info.append(article_info)
+        # Mise à jour du contexte (optionnel)
+        self._update_context(query, api_response, [])
         
-        # Enregistrer dans la base de données
-        conversation_id = None
-        if self.db:
-            conversation_id = self.db.save_conversation(
-                question=query,
-                response=final_response,
-                articles=articles_info,
-                search_method="excellence_unified",
-                semantic_score=cgi_results[0].score if cgi_results else 0.0,
-                query_complexity=0.5,  # Estimation simple
-                execution_time=execution_time,
-                model_used="gemini-2.0-flash"
-            )
-        
-        # Statistiques détaillées
-        stats = {
-            "response": final_response,
-            "cgi_articles": len(cgi_results),
-            "annexe_docs": len(annexe_results),
-            "articles_found": all_article_numbers,
+        # Retourner la réponse de l'API
+        return {
+            "response": api_response,
+            "cgi_articles": 0,  # L'API gère cela en interne
+            "annexe_docs": 0,   # L'API gère cela en interne
+            "articles_found": [], # L'API gère cela en interne
             "execution_time": execution_time,
             "debug_logs": self.get_debug_logs(),
-            "context_used": use_context,
+            "context_used": False,
             "intent": intent,
-            "search_method": "excellence_unified",
-            "collections_searched": ["main", "parent", "sections", "annexe"],
-            "enrichment_used": True,
-            "conversation_id": conversation_id
+            "search_method": "api_cgi",
+            "conversation_id": conversation_id  # Pour le feedback
         }
-        
-        return stats
 
 
 class TerritorialFiscalBot:
@@ -3943,11 +4015,11 @@ Extraits des textes sur les collectivités territoriales:
             self.conversation_context["search_history"] = self.conversation_context["search_history"][-10:]
     
     def process_query_excellence(self, query, messages_history=None):
-        """Traite une requête avec excellence maximale pour les collectivités territoriales"""
+        """Traite une requête avec excellence maximale pour les collectivités territoriales via API"""
         start_time = datetime.now()
         self.clear_debug_logs()
         
-        self.log_debug(f"🚀 TRAITEMENT FCT: '{query}'")
+        self.log_debug(f"🚀 TRAITEMENT FCT VIA API: '{query}'")
         
         # Détection d'intention
         intent = self.detect_conversation_intent(query)
@@ -3969,79 +4041,65 @@ Extraits des textes sur les collectivités territoriales:
                 "search_method": "conversational"
             }
         
-        # Traitement des questions fiscales territoriales
+        # Traitement des questions fiscales territoriales via API
         original_query = query
-        use_context = False
+        user_id = "fct_user"  # ID utilisateur par défaut pour FCT
         
-        # Vérification du contexte
-        if (self.conversation_context["waiting_for_clarification"] and 
-            intent == "clarification"):
-            use_context = True
-            self.log_debug("🔗 Utilisation du contexte de conversation")
+        # Vérifier si on a déjà un ID de conversation pour FCT
+        conversation_key = "fct_conversation_id"
         
-        # RECHERCHE FCT
-        fct_results = self.search_fct_documents(query, limit=12)
+        if conversation_key not in st.session_state.conversation_ids:
+            # Première question : créer une nouvelle conversation
+            self.log_debug("🆕 Création d'une nouvelle conversation FCT")
+            conversation_id = create_conversation_fct(user_id, query)
+            
+            if conversation_id:
+                st.session_state.conversation_ids[conversation_key] = conversation_id
+                self.log_debug(f"✅ Conversation FCT créée: {conversation_id}")
+                
+                # Pour la première question, utiliser directement la réponse de création
+                api_response = send_message_to_conversation_fct(conversation_id, query)
+            else:
+                self.log_debug("❌ Échec de création de conversation FCT")
+                api_response = "Désolé, je ne peux pas traiter votre demande pour le moment. Veuillez réessayer."
+        else:
+            # Questions suivantes : utiliser la conversation existante
+            conversation_id = st.session_state.conversation_ids[conversation_key]
+            self.log_debug(f"📨 Envoi message à la conversation FCT: {conversation_id}")
+            api_response = send_message_to_conversation_fct(conversation_id, query)
         
-        # Génération de la réponse FCT
-        fct_response = self.generate_fct_response(query, fct_results, use_context=use_context)
-        
-        # AJOUTER : Recherche dans les annexes FCT
-        self.log_debug("🔍 Recherche complémentaire dans les annexes FCT...")
-        annexe_results = self.search_fct_annexes(query, limit=self.config["annexe_search_limit"])
-        
-        # Ajouter les précisions des annexes si pertinentes
-        final_response = self.add_annexe_to_fct_response(fct_response, annexe_results, query)
-        
-        # Extraction des articles
-        articles_found = []
-        for result in fct_results:
-            article_num = result.payload.get("article", "N/A")
-            if article_num != "N/A":
-                articles_found.append(article_num)
+        # Si l'API ne répond pas, utiliser le système local en fallback
+        if not api_response:
+            self.log_debug("🔄 Fallback vers le système local FCT")
+            
+            # RECHERCHE FCT locale
+            fct_results = self.search_fct_documents(query, limit=12)
+            
+            # Génération de la réponse FCT locale
+            api_response = self.generate_fct_response(query, fct_results, use_context=False)
+            
+            # Recherche dans les annexes FCT
+            annexe_results = self.search_fct_annexes(query, limit=self.config["annexe_search_limit"])
+            
+            # Ajouter les précisions des annexes si pertinentes
+            api_response = self.add_annexe_to_fct_response(api_response, annexe_results, query)
         
         # Mise à jour du contexte
-        self._update_context(original_query, final_response, articles_found)
+        self._update_context(original_query, api_response, [])
         
         execution_time = (datetime.now() - start_time).total_seconds()
         
-        # Préparer les articles pour la base de données
-        articles_info = []
-        for result in fct_results:
-            article_info = {
-                "article": result.payload.get("article", "N/A"),
-                "nom_article": result.payload.get("nom_article", "Sans titre"),
-                "partie": result.payload.get("partie", ""),
-                "titre": result.payload.get("titre", ""),
-                "chapitre": result.payload.get("chapitre", ""),
-                "section": result.payload.get("section", "")
-            }
-            articles_info.append(article_info)
-        
-        # Enregistrer dans la base de données
-        conversation_id = None
-        if self.db:
-            conversation_id = self.db.save_conversation(
-                question=query,
-                response=final_response,
-                articles=articles_info,
-                search_method="fct_territorial",
-                semantic_score=fct_results[0].score if fct_results else 0.0,
-                query_complexity=len(query.split()),
-                execution_time=execution_time,
-                model_used="voyage-law-2"
-            )
-        
         return {
-            "response": final_response,
-            "fct_articles": len(fct_results),
-            "fct_annexes": len(annexe_results),
-            "articles_found": articles_found,
+            "response": api_response,
+            "fct_articles": 0,  # L'API gère les articles
+            "fct_annexes": 0,   # L'API gère les annexes
+            "articles_found": [],
             "execution_time": execution_time,
             "debug_logs": self.get_debug_logs(),
-            "context_used": use_context,
+            "context_used": False,
             "intent": intent,
-            "search_method": "fct_territorial",
-            "conversation_id": conversation_id
+            "search_method": "fct_api",
+            "conversation_id": st.session_state.conversation_ids.get(conversation_key)
         }
 
 
