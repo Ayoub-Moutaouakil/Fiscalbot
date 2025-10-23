@@ -44,7 +44,7 @@ class Database:
                 port="6543",
                 database="postgres",
                 user="postgres.hhgbwbmfmkpzumlvwsfi",
-                password="VV0EKy7YSLRnTLol"
+                password="Azerty_9280078_"
             )
             self.cur = self.conn.cursor()
             return True
